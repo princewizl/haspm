@@ -21,8 +21,10 @@ git reset --hard "origin/$REF"
 echo "    now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
 # Volumes are owned by the image's non-root user.
+# Volumes are owned by the image's non-root user (uid 10001). Running as the
+# CI "deploy" account we are not root, so fall back to the narrow sudo rule.
 mkdir -p data/{live,test}/{data,static-uploads/properties,doc-uploads/documents}
-chown -R 10001:10001 data
+chown -R 10001:10001 data 2>/dev/null   || sudo -n chown -R 10001:10001 data 2>/dev/null   || echo "    note: could not chown data (already correct?)"
 
 case "$TARGET" in
   test)  SERVICES=(web-test) ;;
