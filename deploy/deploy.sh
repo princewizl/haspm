@@ -23,7 +23,12 @@ echo "    now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 # Volumes are owned by the image's non-root user (uid 10001). Running as the
 # CI "deploy" account we are not root, so fall back to the narrow sudo rule.
 mkdir -p data/{live,test}/{data,static-uploads/properties,doc-uploads/documents}
-chown -R 10001:10001 data 2>/dev/null   || sudo -n chown -R 10001:10001 data 2>/dev/null   || echo "    note: could not chown data (already correct?)"
+# sudoers matches the command line literally, so this must be the absolute path.
+if [ "$(id -u)" -eq 0 ]; then
+  chown -R 10001:10001 "$APP_DIR/data"
+else
+  sudo -n chown -R 10001:10001 "$APP_DIR/data"
+fi
 
 case "$TARGET" in
   test)  SERVICES=(web-test) ;;
