@@ -1,19 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Documents{% endblock %}
-{% block page_title %}Documents{% endblock %}
+{% block title %}{% if self_mode %}My Documents{% else %}Documents{% endif %}{% endblock %}
+{% block page_title %}{% if self_mode %}My Documents{% else %}Documents{% endif %}{% endblock %}
 
 {% block topbar_actions %}
 <div class="topbar-actions-wrap">
-  {% if selected_tenant %}
-  <a href="{{ url_for('documents') }}" class="btn-ghost sm">
-    <i class="bi bi-arrow-left"></i> All Tenants
-  </a>
+  {% if not self_mode %}
+    {% if selected_tenant %}
+    <a href="{{ url_for('documents') }}" class="btn-ghost sm">
+      <i class="bi bi-arrow-left"></i> All Tenants
+    </a>
+    {% endif %}
+    <form method="get" action="{{ url_for('documents') }}" class="search-box">
+      <i class="bi bi-search"></i>
+      <input type="text" name="q" value="{{ q }}" placeholder="Search tenants…"/>
+      {% if q %}<a href="{{ url_for('documents') }}" class="srch-clear"><i class="bi bi-x"></i></a>{% endif %}
+    </form>
+  {% elif documents or doc_type or q %}
+    <a href="{{ url_for('download_all_documents', tenant_id=me.id) }}" class="btn-ghost sm">
+      <i class="bi bi-download"></i> Download All
+    </a>
   {% endif %}
-  <form method="get" action="{{ url_for('documents') }}" class="search-box">
-    <i class="bi bi-search"></i>
-    <input type="text" name="q" value="{{ q }}" placeholder="Search tenants…"/>
-    {% if q %}<a href="{{ url_for('documents') }}" class="srch-clear"><i class="bi bi-x"></i></a>{% endif %}
-  </form>
 </div>
 {% endblock %}
 
@@ -24,23 +30,21 @@
   .srch-clear { position: absolute; right: 10px; color: var(--mt); font-size: 14px; text-decoration: none; }
   .srch-clear:hover { color: var(--cr); }
 
-  /* ── Layout: two-column when tenant selected ── */
+  /* ── Layout ── */
   .doc-layout { display: flex; gap: 20px; align-items: flex-start; }
   .doc-sidebar { width: 280px; flex-shrink: 0; }
   .doc-main { flex: 1; min-width: 0; }
 
-  /* ── Tenant list card ── */
+  /* ── Tenant list ── */
   .tenant-list { list-style: none; padding: 0; margin: 0; }
   .tenant-list-item {
     display: flex; align-items: center; gap: 10px;
-    padding: 11px 14px; border-radius: 10px; cursor: pointer;
+    padding: 11px 14px; border-radius: 10px;
     transition: background .15s; text-decoration: none; color: var(--tx);
     border-left: 3px solid transparent;
   }
   .tenant-list-item:hover { background: var(--bg); }
-  .tenant-list-item.active {
-    background: var(--cr-l); border-left-color: var(--cr); color: var(--cr);
-  }
+  .tenant-list-item.active { background: var(--cr-l); border-left-color: var(--cr); color: var(--cr); }
   .tenant-list-item .tl-meta { flex: 1; min-width: 0; }
   .tenant-list-item .tl-name {
     font-size: 13.5px; font-weight: 600;
@@ -54,21 +58,18 @@
   .tl-count {
     background: var(--bg); border: 1px solid var(--bd);
     border-radius: 99px; padding: 1px 8px;
-    font-size: 11px; font-weight: 700; color: var(--mt);
-    flex-shrink: 0;
+    font-size: 11px; font-weight: 700; color: var(--mt); flex-shrink: 0;
   }
-  .tenant-list-item.active .tl-count {
-    background: var(--cr); color: #fff; border-color: var(--cr);
-  }
+  .tenant-list-item.active .tl-count { background: var(--cr); color: #fff; border-color: var(--cr); }
+  .tl-count.zero { color: var(--wn); border-color: #FDE68A; background: #FFFBEB; }
 
-  /* ── Tenant avatar (small) ── */
   .t-av {
     width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     font-weight: 800; font-size: 13px; color: #fff;
   }
 
-  /* ── Document type badge ── */
+  /* ── Type badges ── */
   .doc-type {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 3px 10px; border-radius: 20px;
@@ -76,25 +77,58 @@
     border: 1px solid transparent;
   }
   .dt-rental_application { background: var(--nv-l); color: var(--nv); border-color: #BFDBFE; }
-  .dt-id_document        { background: #F1F5F9;     color: var(--mt); border-color: var(--bd); }
-  .dt-tenancy_agreement  { background: #ECFDF5;     color: #047857;   border-color: #D1FAE5; }
-  .dt-payment_proof      { background: #FFFBEB;     color: #B45309;   border-color: #FDE68A; }
-  .dt-other              { background: var(--cr-l);  color: var(--cr); border-color: #FED7E2; }
+  .dt-id_document        { background: #F1F5F9;    color: var(--mt); border-color: var(--bd); }
+  .dt-tenancy_agreement  { background: #ECFDF5;    color: #047857;   border-color: #D1FAE5; }
+  .dt-payment_proof      { background: #FFFBEB;    color: #B45309;   border-color: #FDE68A; }
+  .dt-other              { background: var(--cr-l); color: var(--cr); border-color: #FED7E2; }
+
+  /* ── Stats strip ── */
+  .doc-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .doc-stat {
+    background: var(--wh); border: 1px solid var(--bd); border-radius: 11px;
+    padding: 11px 16px; min-width: 108px;
+  }
+  .doc-stat .k { font-size: 10px; font-weight: 600; color: var(--mt);
+                 text-transform: uppercase; letter-spacing: .08em; }
+  .doc-stat .v { font-size: 19px; font-weight: 700; color: var(--tx); margin-top: 3px; }
+  .doc-missing {
+    display: flex; align-items: center; gap: 9px;
+    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 11px;
+    padding: 11px 15px; font-size: 12.5px; color: #92400E; flex: 1; min-width: 220px;
+  }
+  .doc-missing i { font-size: 15px; flex-shrink: 0; }
+  .doc-complete {
+    display: flex; align-items: center; gap: 9px;
+    background: #ECFDF5; border: 1px solid #D1FAE5; border-radius: 11px;
+    padding: 11px 15px; font-size: 12.5px; color: #047857; flex: 1; min-width: 220px;
+  }
+  .doc-complete i { font-size: 15px; flex-shrink: 0; }
+
+  /* ── Filter chips ── */
+  .doc-filters { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .doc-chip {
+    padding: 5px 13px; border-radius: 99px; border: 1.5px solid var(--bd);
+    background: var(--wh); font-size: 12px; font-weight: 600; color: var(--mt);
+    text-decoration: none; transition: all .15s; white-space: nowrap;
+  }
+  .doc-chip:hover { border-color: var(--nv); color: var(--nv); }
+  .doc-chip.active { background: var(--nv); border-color: var(--nv); color: #fff; }
+  .doc-chip .n { opacity: .65; font-weight: 500; }
 
   /* ── Upload zone ── */
   .upload-zone {
     border: 2px dashed var(--bd); border-radius: 12px;
-    padding: 28px 20px; text-align: center; cursor: pointer;
+    padding: 26px 20px; text-align: center; cursor: pointer;
     transition: all .2s; background: var(--bg);
   }
-  .upload-zone:hover, .upload-zone.dragover {
-    border-color: var(--nv); background: var(--nv-l);
-  }
-  .upload-zone i { font-size: 28px; color: var(--mt); display: block; margin-bottom: 8px; }
+  .upload-zone:hover, .upload-zone.dragover { border-color: var(--nv); background: var(--nv-l); }
+  .upload-zone i { font-size: 27px; color: var(--mt); display: block; margin-bottom: 8px; }
   .upload-zone p { font-size: 13px; color: var(--mt); margin: 0; }
   .upload-zone strong { color: var(--nv); }
+  .upload-zone.has-file { border-color: var(--gr); background: #ECFDF5; border-style: solid; }
+  .upload-zone.has-file i { color: var(--gr); }
 
-  /* ── File row actions ── */
+  /* ── Row actions ── */
   .act-btn {
     width: 30px; height: 30px; border-radius: 7px;
     border: 1px solid var(--bd); background: var(--wh);
@@ -103,25 +137,18 @@
     text-decoration: none;
   }
   .act-btn:hover { background: var(--bg); color: var(--nv); border-color: var(--nv); }
-  .act-btn.act-danger:hover { background: rgba(201,24,74,.06); color: var(--cr); border-color: var(--cr); }
+  .act-btn.act-danger:hover { background: var(--cr-l); color: var(--cr); border-color: var(--cr); }
 
-  /* ── Empty state ── */
-  .empty-docs {
-    text-align: center; padding: 50px 20px; color: var(--mt);
-  }
+  /* ── Empty states ── */
+  .empty-docs { text-align: center; padding: 50px 20px; color: var(--mt); }
   .empty-docs i { font-size: 38px; opacity: .25; display: block; margin-bottom: 12px; }
   .empty-docs p { font-size: 14px; margin: 0 0 16px; }
 
-  /* ── Selected tenant header ── */
-  .tenant-doc-header {
-    display: flex; align-items: center; gap: 14px;
-    margin-bottom: 20px;
-  }
+  .tenant-doc-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
   .tenant-doc-header .t-av { width: 44px; height: 44px; font-size: 17px; }
   .tenant-doc-header .th-name { font-size: 17px; font-weight: 800; color: var(--tx); }
   .tenant-doc-header .th-meta { font-size: 12.5px; color: var(--mt); margin-top: 2px; }
 
-  /* ── Responsive ── */
   @media (max-width: 900px) {
     .doc-layout { flex-direction: column; }
     .doc-sidebar { width: 100%; }
@@ -133,9 +160,190 @@
 </style>
 {% endblock %}
 
+{# ══════════════════════════════════════════════════════════════════
+   Shared document table — used by both the staff and self-service views
+   ══════════════════════════════════════════════════════════════════ #}
+{% macro doc_table(documents, can_manage) %}
+<div class="tw">
+  <table class="ht">
+    <thead>
+      <tr>
+        <th>Document</th>
+        <th class="col-hide-sm">Type</th>
+        <th class="col-hide-sm">Uploaded</th>
+        <th>Size</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in documents %}
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:9px">
+            <div style="width:32px;height:32px;border-radius:8px;background:var(--nv-l);
+                        display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <i class="bi bi-{{ 'file-earmark-pdf' if doc.original_filename.lower().endswith('.pdf')
+                                 else 'file-earmark-image' }}"
+                 style="font-size:15px;color:var(--nv)"></i>
+            </div>
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;
+                          text-overflow:ellipsis;max-width:220px">
+                {{ doc.label or doc.original_filename }}
+              </div>
+              {% if doc.label %}
+              <div style="font-size:11px;color:var(--mt);white-space:nowrap;overflow:hidden;
+                          text-overflow:ellipsis;max-width:220px">
+                {{ doc.original_filename }}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </td>
+
+        <td class="col-hide-sm">
+          <span class="doc-type dt-{{ doc.doc_type }}">
+            <i class="bi bi-{{
+              'file-earmark-text'      if doc.doc_type == 'rental_application'
+              else 'file-earmark-check' if doc.doc_type == 'tenancy_agreement'
+              else 'person-badge'       if doc.doc_type == 'id_document'
+              else 'receipt'            if doc.doc_type == 'payment_proof'
+              else 'paperclip'
+            }}" style="font-size:10px"></i>
+            {{ doc.doc_type | replace('_', ' ') | title }}
+          </span>
+        </td>
+
+        <td class="col-hide-sm">
+          <div style="font-size:13px">{{ doc.uploaded_at.strftime('%b %d, %Y') }}</div>
+          <div style="font-size:11px;color:var(--mt)">{{ doc.uploaded_at.strftime('%I:%M %p') }}</div>
+        </td>
+
+        <td><span style="font-size:13px;color:var(--mt)">{{ doc.file_size_str }}</span></td>
+
+        <td>
+          <div style="display:flex;gap:5px;flex-wrap:nowrap">
+            <a href="{{ url_for('view_document', doc_id=doc.id) }}"
+               target="_blank" rel="noopener" class="act-btn" title="View">
+              <i class="bi bi-eye"></i>
+            </a>
+            <a href="{{ url_for('download_document', doc_id=doc.id) }}"
+               class="act-btn" title="Download">
+              <i class="bi bi-download"></i>
+            </a>
+            {% if can_manage %}
+            <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Delete this document? This cannot be undone.')">
+              <button type="submit" class="act-btn act-danger" title="Delete">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro type_filters(endpoint_args, stats) %}
+<div class="doc-filters">
+  <a href="{{ url_for('documents', **endpoint_args) }}"
+     class="doc-chip {% if not doc_type %}active{% endif %}">
+    All <span class="n">{{ stats.count }}</span>
+  </a>
+  {% for key, label in doc_types %}
+    {% if stats.by_type.get(key) %}
+    <a href="{{ url_for('documents', doc_type=key, **endpoint_args) }}"
+       class="doc-chip {% if doc_type == key %}active{% endif %}">
+      {{ label }} <span class="n">{{ stats.by_type.get(key) }}</span>
+    </a>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endmacro %}
+
+
 {% block content %}
 
-<!-- ── Page header ── -->
+{# ══════════════════════════════════════════════════════════════════
+   SELF-SERVICE VIEW — tenants and landlords, read only
+   ══════════════════════════════════════════════════════════════════ #}
+{% if self_mode %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">My Documents</div>
+    <div style="font-size:13px;color:var(--mt);margin-top:3px">
+      Tenancy paperwork and records held on file for you
+    </div>
+  </div>
+</div>
+
+<div class="doc-stats">
+  <div class="doc-stat">
+    <div class="k">Documents</div>
+    <div class="v">{{ stats.count }}</div>
+  </div>
+  <div class="doc-stat">
+    <div class="k">Total Size</div>
+    <div class="v">{{ stats.size_str }}</div>
+  </div>
+  {% if stats.missing %}
+  <div class="doc-missing">
+    <i class="bi bi-exclamation-triangle-fill"></i>
+    <div>
+      <strong>Not yet on file:</strong> {{ stats.missing | join(', ') }}.
+      Contact management if you believe this is an error.
+    </div>
+  </div>
+  {% elif stats.count %}
+  <div class="doc-complete">
+    <i class="bi bi-shield-check"></i>
+    <div>All required documents are on file.</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-hdr">
+    <span class="card-title">
+      Your Files
+      <span style="font-size:12px;color:var(--mt);font-weight:400;margin-left:5px">
+        ({{ documents|length }})
+      </span>
+    </span>
+  </div>
+  <div class="card-body" style="padding-bottom:0">
+    {% if stats.count %}{{ type_filters({}, stats) }}{% endif %}
+  </div>
+
+  {% if documents %}
+    {{ doc_table(documents, false) }}
+  {% else %}
+  <div class="empty-docs">
+    <i class="bi bi-folder2-open"></i>
+    {% if doc_type %}
+      <p>No documents of this type.</p>
+      <a href="{{ url_for('documents') }}" class="btn-ghost sm">Show all documents</a>
+    {% else %}
+      <p>No documents have been uploaded for you yet.</p>
+      <p style="font-size:12.5px;color:var(--mt)">
+        Your tenancy agreement and other records will appear here once management uploads them.
+      </p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ══════════════════════════════════════════════════════════════════
+   STAFF VIEW
+   ══════════════════════════════════════════════════════════════════ #}
+{% else %}
+
 <div class="page-header">
   <div>
     <div class="page-title">Tenant Documents</div>
@@ -147,7 +355,7 @@
 
 <div class="doc-layout">
 
-  <!-- ══ LEFT: Tenant list ══ -->
+  <!-- ══ LEFT: tenant list ══ -->
   <div class="doc-sidebar">
     <div class="card">
       <div class="card-hdr">
@@ -169,7 +377,7 @@
                 <div class="tl-name">{{ t.name }}</div>
                 <div class="tl-prop">{{ t.property_name }}</div>
               </div>
-              <span class="tl-count">{{ t.doc_count }}</span>
+              <span class="tl-count {% if not t.doc_count %}zero{% endif %}">{{ t.doc_count }}</span>
             </a>
           </li>
           {% endfor %}
@@ -177,19 +385,18 @@
         {% else %}
         <div style="text-align:center;padding:24px;color:var(--mt);font-size:13px">
           <i class="bi bi-people" style="font-size:24px;opacity:.3;display:block;margin-bottom:8px"></i>
-          No tenants found
+          {% if q %}No tenants match “{{ q }}”{% else %}No tenants found{% endif %}
         </div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <!-- ══ RIGHT: Document panel ══ -->
+  <!-- ══ RIGHT: document panel ══ -->
   <div class="doc-main">
 
     {% if selected_tenant %}
 
-    <!-- Tenant header -->
     <div class="tenant-doc-header">
       <div class="t-av" style="background:var(--nv)">{{ selected_tenant.name[0]|upper }}</div>
       <div>
@@ -203,10 +410,36 @@
       </div>
     </div>
 
-    <!-- Upload card -->
+    <!-- Completeness at a glance -->
+    <div class="doc-stats">
+      <div class="doc-stat">
+        <div class="k">Documents</div>
+        <div class="v">{{ stats.count }}</div>
+      </div>
+      <div class="doc-stat">
+        <div class="k">Total Size</div>
+        <div class="v">{{ stats.size_str }}</div>
+      </div>
+      {% if stats.missing %}
+      <div class="doc-missing">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <div><strong>Missing:</strong> {{ stats.missing | join(', ') }}</div>
+      </div>
+      {% elif stats.count %}
+      <div class="doc-complete">
+        <i class="bi bi-shield-check"></i>
+        <div>All required documents are on file.</div>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if can_manage %}
+    <!-- Upload -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-hdr">
-        <span class="card-title"><i class="bi bi-cloud-arrow-up" style="color:var(--nv);margin-right:6px"></i>Upload Document</span>
+        <span class="card-title">
+          <i class="bi bi-cloud-arrow-up" style="color:var(--nv);margin-right:6px"></i>Upload Document
+        </span>
       </div>
       <div class="card-body">
         <form method="POST" action="{{ url_for('upload_document', tenant_id=selected_tenant.id) }}"
@@ -216,153 +449,84 @@
               <label class="form-label">Document Type</label>
               <select class="form-sel" name="doc_type" required>
                 <option value="">— Select type —</option>
-                <option value="rental_application">Rental Application</option>
-                <option value="tenancy_agreement">Tenancy Agreement</option>
-                <option value="id_document">ID Document</option>
-                <option value="payment_proof">Payment Proof</option>
-                <option value="other">Other</option>
+                {% for key, label in doc_types %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
               </select>
             </div>
             <div class="fg">
-              <label class="form-label">Label / Notes <span style="font-weight:400;font-size:10px">(optional)</span></label>
+              <label class="form-label">Label / Notes
+                <span style="font-weight:400;font-size:10px">(optional)</span>
+              </label>
               <input class="form-ctrl" name="label" placeholder="e.g. Signed lease 2025…"/>
             </div>
           </div>
 
-          <!-- Drag-drop zone -->
           <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-            <i class="bi bi-file-earmark-arrow-up"></i>
-            <p>Drag & drop or <strong>click to browse</strong></p>
+            <i class="bi bi-file-earmark-arrow-up" id="uploadIcon"></i>
+            <p>Drag &amp; drop or <strong>click to browse</strong></p>
             <p style="font-size:11.5px;margin-top:4px">PDF, JPG, PNG — max 10 MB</p>
-            <p id="selectedFileName" style="font-size:12px;color:var(--nv);font-weight:600;margin-top:6px;display:none"></p>
+            <p id="selectedFileName"
+               style="font-size:12px;color:#047857;font-weight:600;margin-top:6px;display:none"></p>
           </div>
           <input type="file" id="fileInput" name="file" accept=".pdf,.jpg,.jpeg,.png"
                  style="display:none" onchange="handleFileSelect(this)" required/>
 
           <div style="display:flex;gap:10px;margin-top:14px">
-            <button type="submit" class="btn-nv" id="uploadBtn" style="flex:1;justify-content:center" disabled>
+            <button type="submit" class="btn-nv" id="uploadBtn" style="flex:1;justify-content:center">
               <i class="bi bi-cloud-arrow-up"></i> Upload Document
             </button>
           </div>
         </form>
       </div>
     </div>
+    {% endif %}
 
-    <!-- Documents table -->
+    <!-- Documents -->
     <div class="card">
       <div class="card-hdr">
         <span class="card-title">
           Documents
-          <span style="font-size:12px;color:var(--mt);font-weight:400;margin-left:5px">({{ documents|length }})</span>
+          <span style="font-size:12px;color:var(--mt);font-weight:400;margin-left:5px">
+            ({{ documents|length }}{% if doc_type %} of {{ stats.count }}{% endif %})
+          </span>
         </span>
-        {% if documents %}
-        <a href="{{ url_for('download_all_documents', tenant_id=selected_tenant.id) }}"
-           class="btn-ghost sm">
+        {% if stats.count %}
+        <a href="{{ url_for('download_all_documents', tenant_id=selected_tenant.id) }}" class="btn-ghost sm">
           <i class="bi bi-download"></i> Download All
         </a>
         {% endif %}
       </div>
 
-      {% if documents %}
-      <div class="tw">
-        <table class="ht">
-          <thead>
-            <tr>
-              <th>Document</th>
-              <th class="col-hide-sm">Type</th>
-              <th class="col-hide-sm">Uploaded</th>
-              <th>Size</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for doc in documents %}
-            <tr>
-              <!-- File name + label -->
-              <td>
-                <div style="display:flex;align-items:center;gap:9px">
-                  <div style="width:32px;height:32px;border-radius:8px;background:var(--nv-l);
-                              display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                    <i class="bi bi-{{ 'file-earmark-pdf text-cr' if doc.original_filename.endswith('.pdf')
-                                        else 'file-earmark-image text-nv' }}"
-                       style="font-size:15px"></i>
-                  </div>
-                  <div style="min-width:0">
-                    <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">
-                      {{ doc.label or doc.original_filename }}
-                    </div>
-                    {% if doc.label %}
-                    <div style="font-size:11px;color:var(--mt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">
-                      {{ doc.original_filename }}
-                    </div>
-                    {% endif %}
-                  </div>
-                </div>
-              </td>
-
-              <!-- Type badge -->
-              <td class="col-hide-sm">
-                <span class="doc-type dt-{{ doc.doc_type }}">
-                  <i class="bi bi-{{ 
-                    'file-earmark-text'  if doc.doc_type == 'rental_application'
-                    else 'file-earmark-check' if doc.doc_type == 'tenancy_agreement'
-                    else 'person-badge'      if doc.doc_type == 'id_document'
-                    else 'receipt'           if doc.doc_type == 'payment_proof'
-                    else 'paperclip'
-                  }}" style="font-size:10px"></i>
-                  {{ doc.doc_type | replace('_', ' ') | title }}
-                </span>
-              </td>
-
-              <!-- Uploaded date -->
-              <td class="col-hide-sm">
-                <div style="font-size:13px">{{ doc.uploaded_at.strftime('%b %d, %Y') }}</div>
-                <div style="font-size:11px;color:var(--mt)">{{ doc.uploaded_at.strftime('%I:%M %p') }}</div>
-              </td>
-
-              <!-- File size -->
-              <td>
-                <span style="font-size:13px;color:var(--mt)">{{ doc.file_size_str }}</span>
-              </td>
-
-              <!-- Actions -->
-              <td>
-                <div style="display:flex;gap:5px;flex-wrap:nowrap">
-                  <a href="{{ url_for('view_document', doc_id=doc.id) }}"
-                     target="_blank" class="act-btn" title="View">
-                    <i class="bi bi-eye"></i>
-                  </a>
-                  <a href="{{ url_for('download_document', doc_id=doc.id) }}"
-                     class="act-btn" title="Download">
-                    <i class="bi bi-download"></i>
-                  </a>
-                  <form method="POST"
-                        action="{{ url_for('delete_document', doc_id=doc.id) }}"
-                        style="display:inline"
-                        onsubmit="return confirm('Delete this document? This cannot be undone.')">
-                    <button type="submit" class="act-btn act-danger" title="Delete">
-                      <i class="bi bi-trash"></i>
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      {% if stats.count %}
+      <div class="card-body" style="padding-bottom:0">
+        {{ type_filters({'tenant_id': selected_tenant.id, 'q': q}, stats) }}
       </div>
+      {% endif %}
+
+      {% if documents %}
+        {{ doc_table(documents, can_manage) }}
       {% else %}
       <div class="empty-docs">
         <i class="bi bi-folder2-open"></i>
-        <p>No documents uploaded yet for this tenant.</p>
-        <p style="font-size:12.5px;color:var(--mt)">Use the upload form above to add their first document.</p>
+        {% if doc_type %}
+          <p>No documents of this type for {{ selected_tenant.name }}.</p>
+          <a href="{{ url_for('documents', tenant_id=selected_tenant.id, q=q) }}" class="btn-ghost sm">
+            Show all documents
+          </a>
+        {% else %}
+          <p>No documents uploaded yet for this tenant.</p>
+          <p style="font-size:12.5px;color:var(--mt)">
+            {% if can_manage %}Use the upload form above to add their first document.
+            {% else %}Documents uploaded by the team will appear here.{% endif %}
+          </p>
+        {% endif %}
       </div>
       {% endif %}
     </div>
 
     {% else %}
 
-    <!-- No tenant selected state -->
     <div class="card">
       <div class="empty-docs" style="padding:80px 20px">
         <i class="bi bi-folder2"></i>
@@ -375,24 +539,28 @@
   </div>{# end doc-main #}
 
 </div>{# end doc-layout #}
+
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-// ── Drag and drop ──────────────────────────────────────────────────
-const zone = document.getElementById('uploadZone');
-const fileInput = document.getElementById('fileInput');
-const uploadBtn = document.getElementById('uploadBtn');
+const zone       = document.getElementById('uploadZone');
+const fileInput  = document.getElementById('fileInput');
+const uploadBtn  = document.getElementById('uploadBtn');
 const fileNameEl = document.getElementById('selectedFileName');
 
+const ALLOWED_EXT  = ['pdf', 'jpg', 'jpeg', 'png'];
+const ALLOWED_MIME = ['application/pdf', 'image/jpeg', 'image/png'];
+const MAX_BYTES    = 10 * 1024 * 1024;
+
 if (zone) {
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('dragover'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
   zone.addEventListener('drop', e => {
     e.preventDefault();
     zone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) setFile(file);
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
   });
 }
 
@@ -401,28 +569,27 @@ function handleFileSelect(input) {
 }
 
 function setFile(file) {
-  // Validate type
-  const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
-  if (!allowed.includes(file.type)) {
+  // Some browsers report an empty MIME type for PDFs, so the extension is
+  // the authority and the MIME type is only a secondary check.
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!ALLOWED_EXT.includes(ext) || (file.type && !ALLOWED_MIME.includes(file.type))) {
     alert('Only PDF, JPG and PNG files are allowed.');
     return;
   }
-  // Validate size (10 MB)
-  if (file.size > 10 * 1024 * 1024) {
+  if (file.size > MAX_BYTES) {
     alert('File must be under 10 MB.');
     return;
   }
 
-  // Update the actual file input
   const dt = new DataTransfer();
   dt.items.add(file);
   fileInput.files = dt.files;
 
-  // Show file name
   const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
   fileNameEl.textContent = `${file.name} (${sizeMB} MB)`;
   fileNameEl.style.display = 'block';
-  uploadBtn.disabled = false;
+  zone.classList.add('has-file');
+  document.getElementById('uploadIcon').className = 'bi bi-file-earmark-check';
 }
 </script>
 {% endblock %}

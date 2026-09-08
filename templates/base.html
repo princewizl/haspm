@@ -267,9 +267,10 @@
       {% if unread_msg_count > 0 %}<span class="nav-badge">{{ unread_msg_count }}</span>{% endif %}
     </a>
 
-    {% if session.role == 'Admin' and has_perm('view_tenant_full') %}
+    {% if session.role != 'Admin' or has_perm('view_tenant_full') %}
     <a href="{{ url_for('documents') }}" class="nav-item {% if request.endpoint=='documents' %}active{% endif %}">
-      <i class="bi bi-folder2-open"></i> Documents
+      <i class="bi bi-folder2-open"></i>
+      {% if session.role == 'Admin' %}Documents{% else %}My Documents{% endif %}
     </a>
     {% endif %}
 

@@ -10,115 +10,212 @@
 
 {% block extra_head %}
 <style>
-  .msg-layout { display:grid; grid-template-columns:260px 1fr; gap:20px; align-items:start; }
-  @media(max-width:700px){ .msg-layout{grid-template-columns:1fr} .msg-sidebar{display:none} }
+  .msg-layout { display:grid; grid-template-columns:250px 1fr; gap:20px; align-items:start; }
+  @media(max-width:820px){ .msg-layout{grid-template-columns:1fr} }
 
-  .msg-sidebar { background:var(--cd); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
-  .msg-sb-item { display:flex; align-items:center; gap:10px; padding:12px 16px; cursor:pointer; font-size:13px;
+  /* ── Folder rail ── */
+  .msg-sidebar { background:var(--wh); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+  .msg-sb-item { display:flex; align-items:center; gap:10px; padding:12px 16px; font-size:13px;
                  font-weight:500; color:var(--tx); border-left:3px solid transparent; transition:all .15s; }
   .msg-sb-item:hover { background:var(--bg); }
   .msg-sb-item.active { background:var(--cr-l); color:var(--cr); border-left-color:var(--cr); font-weight:600; }
   .msg-sb-item i { font-size:15px; }
+  .msg-sb-count { margin-left:auto; font-size:11px; font-weight:600; color:var(--mt); }
+  .msg-sb-item.active .msg-sb-count { color:var(--cr); }
   .msg-sb-badge { margin-left:auto; background:var(--cr); color:#fff; font-size:10px;
                   font-weight:700; padding:1px 7px; border-radius:99px; }
+  .msg-sb-foot { padding:12px 14px; border-top:1px solid var(--bd); }
 
-  .msg-list { background:var(--cd); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
-  .msg-row { display:flex; align-items:center; gap:12px; padding:14px 18px;
-             border-bottom:1px solid var(--bd); cursor:pointer; transition:background .12s; }
+  /* ── Toolbar above the list ── */
+  .msg-toolbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .msg-toolbar .lbl { font-size:12px; font-weight:700; color:var(--mt); letter-spacing:.09em;
+                      text-transform:uppercase; }
+  .msg-search { position:relative; margin-left:auto; }
+  .msg-search input { border:1.5px solid var(--bd); border-radius:8px; padding:8px 32px 8px 32px;
+                      font-size:13px; font-family:inherit; color:var(--tx); background:var(--wh);
+                      outline:none; width:230px; transition:border-color .2s; }
+  .msg-search input:focus { border-color:var(--nv); }
+  .msg-search .si { position:absolute; left:11px; top:50%; transform:translateY(-50%);
+                    color:var(--mt); font-size:13px; pointer-events:none; }
+  .msg-search .sx { position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                    color:var(--mt); font-size:13px; }
+  .msg-search .sx:hover { color:var(--cr); }
+  @media(max-width:560px){ .msg-search{margin-left:0;width:100%} .msg-search input{width:100%} }
+
+  /* ── Thread rows ── */
+  .msg-list { background:var(--wh); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+  .msg-row { display:flex; align-items:center; gap:12px; padding:13px 16px;
+             border-bottom:1px solid var(--bd); transition:background .12s; position:relative; }
   .msg-row:last-child { border-bottom:none; }
   .msg-row:hover { background:var(--bg); }
   .msg-row.unread { background:var(--cr-l); }
-  .msg-row.unread .msg-subject { font-weight:700; }
+  .msg-row.unread .msg-subject { font-weight:700; color:var(--tx); }
+  .msg-open { display:flex; align-items:center; gap:12px; flex:1; min-width:0;
+              text-decoration:none; color:inherit; }
   .msg-av { width:38px; height:38px; border-radius:50%; background:var(--nv); color:#fff;
             display:flex; align-items:center; justify-content:center; font-size:14px;
             font-weight:700; flex-shrink:0; }
   .msg-av.gr { background:var(--gr); }
   .msg-av.wn { background:var(--wn); }
+  .msg-av.cr { background:var(--cr); }
   .msg-meta { flex:1; min-width:0; }
-  .msg-from { font-size:13px; font-weight:600; color:var(--tx); }
-  .msg-subject { font-size:12.5px; color:var(--mt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .msg-time { font-size:11px; color:var(--mt); flex-shrink:0; }
-  .msg-unread-dot { width:8px; height:8px; border-radius:50%; background:var(--cr); flex-shrink:0; }
+  .msg-from { font-size:13px; font-weight:600; color:var(--tx); display:flex; align-items:center;
+              gap:6px; flex-wrap:wrap; }
+  .msg-from .who-role { font-size:11px; font-weight:400; color:var(--mt); }
+  .msg-count-pill { font-size:10.5px; font-weight:700; color:var(--nv); background:var(--nv-l);
+                    border-radius:99px; padding:0 6px; }
+  .msg-subject { font-size:12.5px; color:var(--tx); white-space:nowrap; overflow:hidden;
+                 text-overflow:ellipsis; margin-top:1px; }
+  .msg-snippet { font-size:11.5px; color:var(--mt); white-space:nowrap; overflow:hidden;
+                 text-overflow:ellipsis; margin-top:1px; }
+  .msg-right { display:flex; flex-direction:column; align-items:flex-end; gap:5px; flex-shrink:0; }
+  .msg-time { font-size:11px; color:var(--mt); white-space:nowrap; }
+  .msg-unread-dot { width:8px; height:8px; border-radius:50%; background:var(--cr); }
 
-  .msg-empty { text-align:center; padding:60px 20px; color:var(--mt); }
-  .msg-empty i { font-size:40px; opacity:.3; display:block; margin-bottom:12px; }
+  /* ── Row actions (revealed on hover, always shown on touch) ── */
+  .msg-acts { display:flex; gap:4px; flex-shrink:0; opacity:0; transition:opacity .15s; }
+  .msg-row:hover .msg-acts, .msg-row:focus-within .msg-acts { opacity:1; }
+  .msg-act { width:28px; height:28px; border-radius:7px; border:1px solid var(--bd);
+             background:var(--wh); color:var(--mt); display:inline-flex; align-items:center;
+             justify-content:center; font-size:12px; cursor:pointer; transition:all .15s; }
+  .msg-act:hover { border-color:var(--nv); color:var(--nv); }
+  .msg-act.danger:hover { border-color:var(--cr); color:var(--cr); background:var(--cr-l); }
+  @media(hover:none){ .msg-acts{opacity:1} }
 
-  .compose-body textarea { resize:vertical; min-height:120px; }
+  .msg-empty { text-align:center; padding:56px 20px; color:var(--mt); }
+  .msg-empty i { font-size:38px; opacity:.28; display:block; margin-bottom:12px; }
+  .msg-empty .t { font-size:14.5px; font-weight:600; color:var(--tx); margin-bottom:5px; }
+  .msg-empty .s { font-size:13px; }
+
+  .compose-body textarea { resize:vertical; min-height:130px; }
+  .hint { font-size:11.5px; color:var(--mt); margin-top:6px; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="msg-layout">
 
-  <!-- Sidebar -->
+  <!-- ══ Folder rail ══ -->
   <div class="msg-sidebar">
     <a href="{{ url_for('messages', tab='inbox') }}"
-       class="msg-sb-item {% if tab == 'inbox' %}active{% endif %}">
+       class="msg-sb-item {% if tab != 'sent' %}active{% endif %}">
       <i class="bi bi-inbox"></i> Inbox
       {% if unread_msg_count > 0 %}
-      <span class="msg-sb-badge">{{ unread_msg_count }}</span>
+        <span class="msg-sb-badge">{{ unread_msg_count }}</span>
+      {% else %}
+        <span class="msg-sb-count">{{ inbox_count }}</span>
       {% endif %}
     </a>
     <a href="{{ url_for('messages', tab='sent') }}"
        class="msg-sb-item {% if tab == 'sent' %}active{% endif %}">
       <i class="bi bi-send"></i> Sent
+      <span class="msg-sb-count">{{ sent_count }}</span>
     </a>
-    <div style="padding:14px 16px">
+
+    <div class="msg-sb-foot">
       <button class="btn-cr" style="width:100%;justify-content:center" onclick="openModal('composeModal')">
         <i class="bi bi-pencil-square"></i> Compose
       </button>
+      {% if unread_msg_count > 0 %}
+      <form method="POST" action="{{ url_for('messages_mark_all_read') }}" style="margin-top:8px">
+        <input type="hidden" name="tab" value="{{ tab }}"/>
+        <button type="submit" class="btn-ghost" style="width:100%;justify-content:center">
+          <i class="bi bi-check2-all"></i> Mark all read
+        </button>
+      </form>
+      {% endif %}
     </div>
   </div>
 
-  <!-- Message List -->
+  <!-- ══ Thread list ══ -->
   <div>
-    {% if tab == 'inbox' %}
-    <div style="font-size:13px;color:var(--mt);font-weight:600;margin-bottom:10px;padding-left:2px">INBOX</div>
-    {% else %}
-    <div style="font-size:13px;color:var(--mt);font-weight:600;margin-bottom:10px;padding-left:2px">SENT</div>
-    {% endif %}
+    <div class="msg-toolbar">
+      <span class="lbl">{% if tab == 'sent' %}Sent{% else %}Inbox{% endif %}</span>
+      <span style="font-size:12px;color:var(--mt)">
+        {{ threads|length }} conversation{{ '' if threads|length == 1 else 's' }}
+        {% if q %}matching “{{ q }}”{% endif %}
+      </span>
+
+      <form method="get" action="{{ url_for('messages') }}" class="msg-search">
+        <input type="hidden" name="tab" value="{{ tab }}"/>
+        <i class="bi bi-search si"></i>
+        <input type="text" name="q" value="{{ q }}" placeholder="Search messages…"/>
+        {% if q %}
+        <a href="{{ url_for('messages', tab=tab) }}" class="sx"><i class="bi bi-x-lg"></i></a>
+        {% endif %}
+      </form>
+    </div>
 
     <div class="msg-list">
-      {% if items %}
-        {% for m in items %}
-        {% if tab == 'inbox' %}
-          {% set other = m.sender %}
-          {% set is_unread = m.read_at is none %}
-        {% else %}
-          {% set other = m.recipient %}
-          {% set is_unread = false %}
-        {% endif %}
+      {% if threads %}
         {% set colors = ['nv','gr','wn','cr'] %}
-        {% set col = colors[loop.index0 % 4] %}
-        <a href="{{ url_for('message_view', msg_id=m.id) }}"
-           class="msg-row {% if is_unread %}unread{% endif %}"
-           style="text-decoration:none;color:inherit">
-          <div class="msg-av {{ col }}">{{ other.name[0].upper() }}</div>
-          <div class="msg-meta">
-            <div class="msg-from">{{ other.name }}
-              <span style="font-size:11px;font-weight:400;color:var(--mt)">
-                ({% if other.role == 'Admin' %}{{ other.department or 'Management' }} Dept{% else %}{{ other.role }}{% endif %})
-              </span>
+        {% for t in threads %}
+        <div class="msg-row {% if t.unread %}unread{% endif %}">
+          <a href="{{ url_for('message_view', msg_id=t.root.id) }}" class="msg-open">
+            <div class="msg-av {{ colors[t.other.id % 4] }}">{{ t.other.name[0]|upper }}</div>
+            <div class="msg-meta">
+              <div class="msg-from">
+                {{ t.other.name }}
+                <span class="who-role">
+                  {% if t.other.role == 'Admin' %}{{ t.other.department or 'Management' }} Dept
+                  {% else %}{{ t.other.role }}{% endif %}
+                </span>
+                {% if t.count > 1 %}
+                <span class="msg-count-pill">{{ t.count }}</span>
+                {% endif %}
+              </div>
+              <div class="msg-subject">{{ t.root.subject }}</div>
+              {% if t.snippet %}<div class="msg-snippet">{{ t.snippet }}</div>{% endif %}
             </div>
-            <div class="msg-subject">{{ m.subject }}</div>
+            <div class="msg-right">
+              <span class="msg-time">
+                {% if t.last_at %}{{ t.last_at.strftime('%b %d') }}{% endif %}
+              </span>
+              {% if t.unread %}<div class="msg-unread-dot"></div>{% endif %}
+            </div>
+          </a>
+
+          <div class="msg-acts">
+            <form method="POST" action="{{ url_for('message_mark', msg_id=t.root.id) }}">
+              <input type="hidden" name="state" value="{{ 'unread' if not t.unread else 'read' }}"/>
+              <input type="hidden" name="next" value="{{ url_for('messages', tab=tab, q=q) }}"/>
+              <button type="submit" class="msg-act"
+                      title="{{ 'Mark as unread' if not t.unread else 'Mark as read' }}">
+                <i class="bi bi-{{ 'envelope' if not t.unread else 'envelope-open' }}"></i>
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('message_delete', msg_id=t.root.id) }}"
+                  onsubmit="return confirm('Delete this conversation and all its replies?')">
+              <input type="hidden" name="tab" value="{{ tab }}"/>
+              <button type="submit" class="msg-act danger" title="Delete conversation">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
           </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-            <span class="msg-time">{{ m.created_at.strftime('%b %d') }}</span>
-            {% if is_unread %}<div class="msg-unread-dot"></div>{% endif %}
-          </div>
-        </a>
+        </div>
         {% endfor %}
       {% else %}
         <div class="msg-empty">
-          <i class="bi bi-{% if tab == 'inbox' %}inbox{% else %}send{% endif %}"></i>
-          {% if tab == 'inbox' %}No messages in your inbox.{% else %}No sent messages.{% endif %}
+          {% if q %}
+            <i class="bi bi-search"></i>
+            <div class="t">No conversations match “{{ q }}”</div>
+            <div class="s"><a href="{{ url_for('messages', tab=tab) }}" style="color:var(--nv)">Clear the search</a> to see everything.</div>
+          {% elif tab == 'sent' %}
+            <i class="bi bi-send"></i>
+            <div class="t">Nothing sent yet</div>
+            <div class="s">Messages you send will be listed here.</div>
+          {% else %}
+            <i class="bi bi-inbox"></i>
+            <div class="t">Your inbox is empty</div>
+            <div class="s">New messages will appear here.</div>
+          {% endif %}
         </div>
       {% endif %}
     </div>
   </div>
 </div>
 
-<!-- Compose Modal -->
+<!-- ══ Compose modal ══ -->
 <div class="modal-ov" id="composeModal">
   <div class="modal-box" style="max-width:520px">
     <div class="modal-hdr">
@@ -162,6 +259,9 @@
               {% endif %}
             {% endif %}
           </select>
+          {% if role in ['Tenant', 'Landlord'] %}
+          <div class="hint">Messages go to the management team, who will route them internally.</div>
+          {% endif %}
         </div>
         <div class="fg">
           <label class="form-label">Subject</label>

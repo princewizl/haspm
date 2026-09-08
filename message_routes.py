@@ -1,16 +1,102 @@
 from flask import request, redirect, url_for, render_template, session, flash
+from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 from models import db, User, Message
 from datetime import datetime
+
+
+# Messages are stored two levels deep: a root message (parent_id IS NULL) and
+# its replies.  A "thread" is a root plus every reply that hangs off it.
+def _thread_key(m):
+    return m.parent_id or m.id
+
+
+def _build_threads(uid, tab, q=""):
+    """Group every message this user can see into threads, newest activity first.
+
+    Inbox = threads where the user received at least one message.
+    Sent   = threads where the user sent at least one message.
+    A thread can legitimately appear in both, exactly like a mail client.
+    """
+    involved = (Message.query
+                .options(joinedload(Message.sender), joinedload(Message.recipient))
+                .filter(or_(Message.sender_id == uid, Message.recipient_id == uid))
+                .order_by(Message.created_at.asc())
+                .all())
+
+    grouped = {}
+    for m in involved:
+        grouped.setdefault(_thread_key(m), []).append(m)
+
+    # A reply is visible without its root when the root was addressed elsewhere;
+    # pull in any root we are missing so the subject line is never blank.
+    have = {m.id for m in involved}
+    missing = [k for k in grouped if k not in have]
+    roots = {}
+    if missing:
+        for r in (Message.query
+                  .options(joinedload(Message.sender), joinedload(Message.recipient))
+                  .filter(Message.id.in_(missing)).all()):
+            roots[r.id] = r
+    for m in involved:
+        if m.parent_id is None:
+            roots[m.id] = m
+
+    threads = []
+    for key, msgs in grouped.items():
+        root = roots.get(key)
+        if root is None:
+            continue
+
+        msgs.sort(key=lambda m: m.created_at or datetime.min)
+        last = msgs[-1]
+
+        received = [m for m in msgs if m.recipient_id == uid]
+        sent     = [m for m in msgs if m.sender_id == uid]
+
+        if tab == "sent" and not sent:
+            continue
+        if tab != "sent" and not received:
+            continue
+
+        other = root.recipient if root.sender_id == uid else root.sender
+        unread = sum(1 for m in received if m.read_at is None)
+
+        if q:
+            needle = q.lower()
+            haystack = " ".join([
+                root.subject or "",
+                other.name or "",
+                other.email or "",
+                " ".join(m.body or "" for m in msgs),
+            ]).lower()
+            if needle not in haystack:
+                continue
+
+        threads.append({
+            "root": root,
+            "other": other,
+            "last": last,
+            "count": len(msgs),
+            "replies": len(msgs) - 1 if root in msgs else len(msgs),
+            "unread": unread,
+            "last_at": last.created_at,
+            "snippet": (last.body or "").strip().replace("\n", " ")[:110],
+        })
+
+    threads.sort(key=lambda t: t["last_at"] or datetime.min, reverse=True)
+    return threads
 
 
 def register_message_routes(app):
 
     @app.context_processor
     def inject_unread_count():
+        """Unread badge counts every unread message, replies included."""
         if "user_id" in session:
             count = Message.query.filter_by(
                 recipient_id=session["user_id"], read_at=None
-            ).filter(Message.parent_id.is_(None)).count()
+            ).count()
             return {"unread_msg_count": count}
         return {"unread_msg_count": 0}
 
@@ -22,17 +108,13 @@ def register_message_routes(app):
         uid  = session["user_id"]
         role = session["role"]
         tab  = request.args.get("tab", "inbox")
+        q    = request.args.get("q", "").strip()
 
-        if tab == "sent":
-            items = (Message.query
-                     .filter_by(sender_id=uid)
-                     .filter(Message.parent_id.is_(None))
-                     .order_by(Message.created_at.desc()).all())
-        else:
-            items = (Message.query
-                     .filter_by(recipient_id=uid)
-                     .filter(Message.parent_id.is_(None))
-                     .order_by(Message.created_at.desc()).all())
+        threads = _build_threads(uid, tab, q)
+
+        # Counts for the sidebar are unfiltered by the search box.
+        inbox_count = len(_build_threads(uid, "inbox"))
+        sent_count  = len(_build_threads(uid, "sent"))
 
         if role in ("Tenant", "Landlord"):
             recipients = User.query.filter_by(role="Admin", is_active=True).all()
@@ -43,7 +125,8 @@ def register_message_routes(app):
 
         return render_template(
             "messages.html",
-            items=items, tab=tab,
+            threads=threads, tab=tab, q=q,
+            inbox_count=inbox_count, sent_count=sent_count,
             recipients=recipients,
             role=role
         )
@@ -64,6 +147,10 @@ def register_message_routes(app):
             flash("All fields are required.", "danger")
             return redirect(url_for("messages"))
 
+        if recipient_id == uid:
+            flash("You cannot send a message to yourself.", "danger")
+            return redirect(url_for("messages"))
+
         recipient = User.query.get(recipient_id)
         if not recipient:
             flash("Recipient not found.", "danger")
@@ -78,7 +165,7 @@ def register_message_routes(app):
         db.session.add(msg)
         db.session.commit()
         flash("Message sent successfully.", "success")
-        return redirect(url_for("messages"))
+        return redirect(url_for("message_view", msg_id=msg.id))
 
     # ── View thread ───────────────────────────
     @app.route("/messages/<int:msg_id>")
@@ -88,6 +175,10 @@ def register_message_routes(app):
         uid = session["user_id"]
         msg = Message.query.get_or_404(msg_id)
 
+        # Opening a reply link lands on the thread it belongs to.
+        if msg.parent_id:
+            return redirect(url_for("message_view", msg_id=msg.parent_id))
+
         if msg.sender_id != uid and msg.recipient_id != uid:
             flash("Access denied.", "danger")
             return redirect(url_for("messages"))
@@ -96,6 +187,7 @@ def register_message_routes(app):
             msg.read_at = datetime.utcnow()
 
         replies = (Message.query
+                   .options(joinedload(Message.sender))
                    .filter_by(parent_id=msg_id)
                    .order_by(Message.created_at.asc()).all())
 
@@ -104,9 +196,11 @@ def register_message_routes(app):
                 r.read_at = datetime.utcnow()
 
         db.session.commit()
+
+        other = msg.recipient if msg.sender_id == uid else msg.sender
         return render_template(
             "message_view.html",
-            msg=msg, replies=replies, role=session["role"]
+            msg=msg, replies=replies, other=other, role=session["role"]
         )
 
     # ── Reply ─────────────────────────────────
@@ -134,10 +228,11 @@ def register_message_routes(app):
             flash("You can only reply to staff members.", "danger")
             return redirect(url_for("message_view", msg_id=msg_id))
 
+        subject = msg.subject or ""
         reply = Message(
             sender_id=uid,
             recipient_id=recipient_id,
-            subject="Re: " + msg.subject,
+            subject=subject if subject.lower().startswith("re:") else "Re: " + subject,
             body=body,
             parent_id=msg_id
         )
@@ -145,6 +240,47 @@ def register_message_routes(app):
         db.session.commit()
         flash("Reply sent.", "success")
         return redirect(url_for("message_view", msg_id=msg_id))
+
+    # ── Mark a thread read / unread ───────────
+    @app.route("/messages/<int:msg_id>/mark", methods=["POST"])
+    def message_mark(msg_id):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        uid = session["user_id"]
+        msg = Message.query.get_or_404(msg_id)
+
+        if msg.sender_id != uid and msg.recipient_id != uid:
+            flash("Access denied.", "danger")
+            return redirect(url_for("messages"))
+
+        state = request.form.get("state", "read")
+        stamp = datetime.utcnow() if state == "read" else None
+
+        thread = [msg] + Message.query.filter_by(parent_id=msg.id).all()
+        for m in thread:
+            if m.recipient_id == uid:
+                m.read_at = stamp
+        db.session.commit()
+
+        flash("Marked as unread." if stamp is None else "Marked as read.", "success")
+        return redirect(request.form.get("next") or url_for("messages"))
+
+    # ── Mark every inbox thread read ──────────
+    @app.route("/messages/mark-all-read", methods=["POST"])
+    def messages_mark_all_read():
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        uid = session["user_id"]
+        now = datetime.utcnow()
+
+        unread = Message.query.filter_by(recipient_id=uid, read_at=None).all()
+        for m in unread:
+            m.read_at = now
+        db.session.commit()
+
+        flash(f"{len(unread)} message(s) marked as read." if unread
+              else "No unread messages.", "success")
+        return redirect(url_for("messages", tab=request.form.get("tab", "inbox")))
 
     # ── Delete ────────────────────────────────
     @app.route("/messages/<int:msg_id>/delete", methods=["POST"])
@@ -160,6 +296,6 @@ def register_message_routes(app):
             Message.query.filter_by(parent_id=msg_id).delete()
             db.session.delete(msg)
             db.session.commit()
-            flash("Message deleted.", "success")
+            flash("Conversation deleted.", "success")
 
-        return redirect(url_for("messages"))
+        return redirect(url_for("messages", tab=request.form.get("tab", "inbox")))

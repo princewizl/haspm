@@ -38,7 +38,7 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config["SQLALCHEMY_DATABASE_URI"]        = f"sqlite:///{os.path.join(BASE_DIR, 'hs_property.db')}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"]                  = os.path.join(BASE_DIR, "static", "uploads", "properties")
-app.config["MAX_CONTENT_LENGTH"]             = 10 * 1024 * 1024  # 10 MB (matches the document upload limit)
+app.config["MAX_CONTENT_LENGTH"]             = 8 * 1024 * 1024   # 8 MB
 app.config["DOCS_UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads", "documents")
 os.makedirs(app.config["DOCS_UPLOAD_FOLDER"], exist_ok=True)
 
@@ -99,7 +99,7 @@ app.config.setdefault("BANK_ACCOUNT_NUMBER", "")
 app.config.setdefault("BANK_ACCOUNT_NAME",   "")
 app.config.setdefault("BANK_TRANSFER_NOTE",  "")
 
-IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 db.init_app(app)
@@ -128,17 +128,13 @@ def fmt(n):
 app.jinja_env.globals["fmt"] = fmt
 
 
-def _has_ext(filename, extensions):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in extensions
-
-
-def allowed_image_file(filename):
-    return _has_ext(filename, IMAGE_EXTENSIONS)
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def save_property_image(file_obj):
     """Save uploaded image; return URL path or None."""
-    if file_obj and file_obj.filename and allowed_image_file(file_obj.filename):
+    if file_obj and file_obj.filename and allowed_file(file_obj.filename):
         ext      = file_obj.filename.rsplit(".", 1)[1].lower()
         filename = f"{uuid.uuid4().hex}.{ext}"
         path     = os.path.join(app.config["UPLOAD_FOLDER"], filename)
@@ -174,11 +170,10 @@ def role_required(*roles):
         return decorated
     return decorator
 
-DOC_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
-MAX_DOC_BYTES  = 10 * 1024 * 1024   # 10 MB
-
-def allowed_document_file(filename):
-    return _has_ext(filename, DOC_EXTENSIONS)
+ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
+ 
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
  
 
 # ─────────────────────────────────────────────
@@ -945,173 +940,81 @@ def rate_technician(ticket_id):
 
 # Finance routes are handled by finance_routes.py
 
-@app.errorhandler(413)
-def _file_too_large(e):
-    """Werkzeug aborts oversized requests before the route runs."""
-    flash("That file is too large. The maximum upload size is 10 MB.", "danger")
-    return redirect(request.referrer or url_for("dashboard"))
-
-
 # ─────────────────────────────────────────────
 #  DOCUMENTS
 # ─────────────────────────────────────────────
 
-DOC_TYPES = [
-    ("rental_application", "Rental Application"),
-    ("tenancy_agreement",  "Tenancy Agreement"),
-    ("id_document",        "ID Document"),
-    ("payment_proof",      "Payment Proof"),
-    ("other",              "Other"),
-]
-
-# Documents every active tenant is expected to have on file.
-REQUIRED_DOC_TYPES = ["tenancy_agreement", "id_document"]
-
-
-class _Row:
-    """Lightweight attribute bag so Jinja can use dot access."""
-    def __init__(self, **kw):
-        self.__dict__.update(kw)
-
-
-def _can_manage_documents():
-    return session.get("role") == "Admin" and has_perm("edit_contacts")
-
-
-def _doc_owner_or_staff(doc):
-    """A document is reachable by the person it belongs to, or by staff
-    whose department grants full tenant access."""
-    if session.get("user_id") == doc.tenant_id:
-        return True
-    return session.get("role") == "Admin" and has_perm("view_tenant_full")
-
-
-def _document_stats(docs):
-    by_type = {key: 0 for key, _ in DOC_TYPES}
-    total_bytes = 0
-    for d in docs:
-        by_type[d.doc_type] = by_type.get(d.doc_type, 0) + 1
-        total_bytes += d.file_size or 0
-    if total_bytes < 1024:
-        size_str = f"{total_bytes} B"
-    elif total_bytes < 1024 * 1024:
-        size_str = f"{total_bytes / 1024:.1f} KB"
-    else:
-        size_str = f"{total_bytes / (1024 * 1024):.1f} MB"
-    missing = [label for key, label in DOC_TYPES
-               if key in REQUIRED_DOC_TYPES and not by_type.get(key)]
-    return _Row(count=len(docs), size_str=size_str, by_type=by_type, missing=missing)
-
-
 @app.route("/documents")
-@login_required
+@dept_required("view_tenant_full")
 def documents():
-    """Staff browse every tenant's file; tenants and landlords see their own."""
-    role      = session["role"]
-    q         = request.args.get("q", "").lower()
-    doc_type  = request.args.get("doc_type", "")
+    q = request.args.get("q", "").lower()
     tenant_id = request.args.get("tenant_id", type=int)
-
-    # ── Self-service view for tenants and landlords ──────────────────
-    if role != "Admin":
-        me = User.query.get_or_404(session["user_id"])
-        own = (TenantDocument.query
-               .filter_by(tenant_id=me.id)
-               .order_by(TenantDocument.uploaded_at.desc())
-               .all())
-        stats = _document_stats(own)
-
-        shown = own
-        if doc_type:
-            shown = [d for d in shown if d.doc_type == doc_type]
-        if q:
-            shown = [d for d in shown
-                     if q in (d.original_filename or "").lower()
-                     or q in (d.label or "").lower()]
-
-        active = Tenancy.query.filter_by(tenant_id=me.id, is_active=True).first()
-        return render_template(
-            "documents.html",
-            self_mode=True,
-            me=me,
-            selected_tenant=_Row(
-                id=me.id, name=me.name, email=me.email,
-                property_name=active.unit.prop.name if active else "—",
-                unit_number=active.unit.unit_number if active else "—",
-            ),
-            tenants=[], documents=shown, stats=stats,
-            doc_types=DOC_TYPES, doc_type=doc_type, q=q,
-            can_manage=False, role=role,
-        )
-
-    # ── Staff view ───────────────────────────────────────────────────
-    if not has_perm("view_tenant_full"):
-        flash(f"Access denied. The {current_dept()} department cannot view tenant documents.",
-              "danger")
-        return redirect(url_for("dashboard"))
-
-    tenant_users = User.query.filter_by(role="Tenant").order_by(User.name).all()
+ 
+    # Build tenant list (only users with role=Tenant)
+    tenant_users = User.query.filter_by(role="Tenant").all()
+ 
     if q:
-        tenant_users = [u for u in tenant_users
-                        if q in u.name.lower() or q in (u.email or "").lower()]
-
-    # One grouped count query instead of a COUNT per tenant.
-    counts = dict(
-        db.session.query(TenantDocument.tenant_id, func.count(TenantDocument.id))
-        .group_by(TenantDocument.tenant_id).all()
-    )
-
+        tenant_users = [u for u in tenant_users if q in u.name.lower() or q in u.email.lower()]
+ 
     tenant_list = []
     for u in tenant_users:
         active = Tenancy.query.filter_by(tenant_id=u.id, is_active=True).first()
-        tenant_list.append(_Row(
-            id=u.id, name=u.name, email=u.email,
-            property_name=active.unit.prop.name if active else "—",
-            unit_number=active.unit.unit_number if active else "—",
-            doc_count=counts.get(u.id, 0),
-        ))
-
+        doc_count = TenantDocument.query.filter_by(tenant_id=u.id).count()
+        tenant_list.append({
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "property_name": active.unit.prop.name if active else "—",
+            "unit_number": active.unit.unit_number if active else "—",
+            "doc_count": doc_count,
+        })
+ 
+    # Wrap tenant_list items as simple objects accessible by attribute in Jinja
+    class _T:
+        def __init__(self, d):
+            self.__dict__.update(d)
+ 
+    tenant_list = [_T(t) for t in tenant_list]
+ 
+    # Selected tenant detail
     selected_tenant = None
-    documents_list  = []
-    stats           = None
-
+    documents_list = []
+ 
     if tenant_id:
         user = User.query.get_or_404(tenant_id)
         if user.role != "Tenant":
             abort(403)
-
+ 
         active = Tenancy.query.filter_by(tenant_id=user.id, is_active=True).first()
-        selected_tenant = _Row(
-            id=user.id, name=user.name, email=user.email,
-            property_name=active.unit.prop.name if active else "—",
-            unit_number=active.unit.unit_number if active else "—",
+ 
+        class _ST:
+            pass
+ 
+        st = _ST()
+        st.id = user.id
+        st.name = user.name
+        st.email = user.email
+        st.property_name = active.unit.prop.name if active else "—"
+        st.unit_number = active.unit.unit_number if active else "—"
+        selected_tenant = st
+ 
+        documents_list = (
+            TenantDocument.query
+            .filter_by(tenant_id=tenant_id)
+            .order_by(TenantDocument.uploaded_at.desc())
+            .all()
         )
-
-        all_docs = (TenantDocument.query
-                    .filter_by(tenant_id=tenant_id)
-                    .order_by(TenantDocument.uploaded_at.desc())
-                    .all())
-        stats = _document_stats(all_docs)
-
-        documents_list = all_docs
-        if doc_type:
-            documents_list = [d for d in documents_list if d.doc_type == doc_type]
-
+ 
     return render_template(
         "documents.html",
-        self_mode=False,
         tenants=tenant_list,
         selected_tenant=selected_tenant,
         documents=documents_list,
-        stats=stats,
-        doc_types=DOC_TYPES,
-        doc_type=doc_type,
         q=q,
-        can_manage=_can_manage_documents(),
-        role=role,
+        role=session["role"],
     )
-
-
+ 
+ 
 # ── Upload a document for a tenant ─────────────────────────────────
 @app.route("/documents/<int:tenant_id>/upload", methods=["POST"])
 @dept_required("edit_contacts")
@@ -1129,13 +1032,13 @@ def upload_document(tenant_id):
         flash("No file selected.", "danger")
         return redirect(url_for("documents", tenant_id=tenant_id))
  
-    if not allowed_document_file(file.filename):
+    if not allowed_file(file.filename):
         flash("File type not allowed. Use PDF, JPG, or PNG.", "danger")
         return redirect(url_for("documents", tenant_id=tenant_id))
  
     # Read into memory to check size
     file_bytes = file.read()
-    if len(file_bytes) > MAX_DOC_BYTES:
+    if len(file_bytes) > 10 * 1024 * 1024:
         flash("File is too large. Maximum size is 10 MB.", "danger")
         return redirect(url_for("documents", tenant_id=tenant_id))
  
@@ -1171,11 +1074,9 @@ def upload_document(tenant_id):
  
 # ── View (inline in browser) ────────────────────────────────────────
 @app.route("/documents/view/<int:doc_id>")
-@login_required
+@dept_required("view_tenant_full")
 def view_document(doc_id):
     doc = TenantDocument.query.get_or_404(doc_id)
-    if not _doc_owner_or_staff(doc):
-        abort(403)
     upload_folder = app.config.get("DOCS_UPLOAD_FOLDER",
                                    os.path.join(os.path.dirname(__file__), "uploads", "documents"))
     path = os.path.join(upload_folder, doc.stored_filename)
@@ -1187,11 +1088,9 @@ def view_document(doc_id):
  
 # ── Download (force download) ────────────────────────────────────────
 @app.route("/documents/download/<int:doc_id>")
-@login_required
+@dept_required("view_tenant_full")
 def download_document(doc_id):
     doc = TenantDocument.query.get_or_404(doc_id)
-    if not _doc_owner_or_staff(doc):
-        abort(403)
     upload_folder = app.config.get("DOCS_UPLOAD_FOLDER",
                                    os.path.join(os.path.dirname(__file__), "uploads", "documents"))
     path = os.path.join(upload_folder, doc.stored_filename)
@@ -1203,11 +1102,8 @@ def download_document(doc_id):
  
 # ── Download all docs for a tenant as ZIP ───────────────────────────
 @app.route("/documents/<int:tenant_id>/download-all")
-@login_required
+@dept_required("view_tenant_full")
 def download_all_documents(tenant_id):
-    if session.get("user_id") != tenant_id and not (
-            session.get("role") == "Admin" and has_perm("view_tenant_full")):
-        abort(403)
     user = User.query.get_or_404(tenant_id)
     docs = TenantDocument.query.filter_by(tenant_id=tenant_id).all()
  
