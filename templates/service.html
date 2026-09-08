@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+{% block title %}Service Requests{% endblock %}
+{% block page_title %}{% if role=='Tenant' %}Report an Issue{% else %}Service Requests{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn-cr" onclick="openModal('newSRModal')">
+  <i class="bi bi-plus-lg"></i> <span class="hide-mobile">{% if role=='Tenant' %}Report Issue{% else %}New Request{% endif %}</span>
+</button>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Summary Grid */
+  .sr-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+  
+  /* Ticket Item Layout */
+  .ticket-row { padding: 16px 20px; border-bottom: 1px solid var(--bd); transition: background .15s, transform .1s; cursor: pointer; }
+  .ticket-row:hover { background: #FAFCFF; }
+  .ticket-row:active { background: #F3F8FF; }
+  .ticket-content { display: flex; flex-direction: column; gap: 12px; }
+  
+  /* Modal Specific Layout */
+  .modal-section { font-size: 10px; font-weight: 700; color: var(--mt); text-transform: uppercase; letter-spacing: .12em; border-bottom: 1px solid var(--bd); padding-bottom: 6px; margin: 24px 0 12px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; font-size: 13.5px; }
+  .detail-lbl { color: var(--mt); font-size: 11px; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
+  .detail-val { color: var(--tx); font-weight: 500; }
+  
+  /* Technician Ratings */
+  .star-display { color: #F59E0B; letter-spacing: 1px; }
+  .star-display .bi-star { opacity: .35; }
+  .star-input { display: flex; gap: 8px; justify-content: center; font-size: 30px; color: #F59E0B; }
+  .star-input i { cursor: pointer; transition: transform .12s; }
+  .star-input i:hover { transform: scale(1.18); }
+  .tech-rating-row { display:flex; align-items:center; justify-content:space-between; padding:11px 20px; border-bottom:1px solid var(--bg); font-size:13px; }
+  .tech-rating-row:last-child { border-bottom:none; }
+
+  /* Responsive Adjustments */
+  @media (max-width: 992px) {
+    .sr-stat-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 768px) {
+    .sr-stat-grid { grid-template-columns: 1fr; }
+    .ticket-row .df.aic { flex-direction: column; align-items: flex-start; }
+    .ticket-actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
+    .hide-mobile { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sr-stat-grid">
+  {% for lbl,val,col in [('Open',open_count,'cr'),('In Progress',prog_count,'nv'),('Resolved',done_count,'gr')] %}
+  <div class="card" style="padding:16px 20px;border-left:4px solid var(--{{ col }})">
+    <div style="font-size:11px;font-weight:700;color:var(--mt);text-transform:uppercase;letter-spacing:.08em">{{ lbl }}</div>
+    <div class="syne fw7 text-{{ col }}" style="font-size:28px">{{ val }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if role == 'Admin' and dept == 'Management' and rating_summary %}
+<div class="card" style="margin-bottom:20px">
+  <div class="card-hdr">
+    <span class="card-title"><i class="bi bi-star-fill" style="color:#F59E0B;margin-right:6px"></i>Technician Ratings</span>
+    <span style="font-size:12px;color:var(--mt)">Average tenant rating per technician</span>
+  </div>
+  {% for r in rating_summary %}
+  <div class="tech-rating-row">
+    <div class="df aic g8">
+      <div class="av nv" style="width:30px;height:30px;font-size:12px"><i class="bi bi-wrench"></i></div>
+      <span class="fw6">{{ r.technician }}</span>
+    </div>
+    <div class="df aic g8">
+      <span class="star-display">
+        {% for i in range(r.avg | round | int) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - (r.avg | round | int)) %}<i class="bi bi-star"></i>{% endfor %}
+      </span>
+      <span class="fw7" style="min-width:34px;text-align:right">{{ r.avg }}</span>
+      <span style="color:var(--mt);font-size:12px">({{ r.count }} rating{{ 's' if r.count != 1 }})</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-hdr">
+    <span class="card-title">{% if role=='Tenant' %}My Requests{% else %}All Requests{% endif %}</span>
+  </div>
+  
+  <div style="padding:6px 0">
+  {% for t in tickets %}
+    {% set sic={'open':'circle-fill','in-progress':'arrow-repeat','resolved':'check-circle-fill'} %}
+    {% set sc={'open':'cr','in-progress':'nv','resolved':'gr'} %}
+    
+    <div class="ticket-row" onclick="openModal('viewTicket_{{ t.id }}')">
+      <div class="df aic" style="justify-content:space-between; flex-wrap: wrap;">
+        
+        <div style="flex:1; min-width: 200px;">
+          <div class="df aic g8" style="margin-bottom:6px; flex-wrap:wrap;">
+            <i class="bi bi-{{ sic[t.status] }} text-{{ sc[t.status] }}"></i>
+            <span class="fw7" style="font-size:14.5px">{{ t.title }}</span>
+            <span class="badge b-{{ t.priority }}">{{ t.priority }}</span>
+            <span class="badge" style="background:#F1F5F9;color:var(--mt);border-color:var(--bd)">{{ t.category }}</span>
+          </div>
+          
+          <div style="font-size:12px;color:var(--mt);display:flex; gap:12px; flex-wrap:wrap;">
+            <span><i class="bi bi-geo-alt"></i> {{ t.prop.name }} · Unit {{ t.unit.unit_number if t.unit else '-' }}</span>
+            <span><i class="bi bi-person"></i> {{ t.tenant.name }}</span>
+            <span><i class="bi bi-calendar3"></i> {{ t.date_raised.strftime('%b %d, %Y') if t.date_raised else '-' }}</span>
+          </div>
+
+          {% if t.technician %}
+            <div style="font-size:12px;color:var(--nv);font-weight:600;margin-top:6px">
+              <i class="bi bi-wrench"></i> Assigned: {{ t.technician }}
+              {% if t.rating %}
+              <span class="star-display" title="Rated {{ t.rating.stars }}/5 by tenant">
+                {% for i in range(t.rating.stars) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - t.rating.stars) %}<i class="bi bi-star"></i>{% endfor %}
+              </span>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+        
+        <div class="df g8 ticket-actions" style="flex-shrink:0;" onclick="event.stopPropagation()">
+          <span class="badge b-{{ t.status }}" style="padding:6px 12px;font-size:12px">{{ t.status }}</span>
+          
+          {% if role == 'Admin' and t.status == 'open' %}
+          <button class="btn-nv sm" onclick="openModal('assign_{{ t.id }}')"><i class="bi bi-person-check"></i> Assign</button>
+          {% endif %}
+          
+          {% if (role == 'Landlord' or (role == 'Admin' and has_perm('edit_maintenance'))) and t.status != 'resolved' %}
+          <form method="POST" action="{{ url_for('resolve_ticket',ticket_id=t.id) }}" style="display:inline">
+            <button type="submit" class="btn-ghost sm"><i class="bi bi-check-lg"></i> Resolve</button>
+          </form>
+          {% endif %}
+
+          {% if role == 'Tenant' and t.status == 'resolved' and t.technician %}
+            {% if t.rating %}
+            <span class="star-display" style="font-size:13px" title="You rated {{ t.rating.stars }}/5">
+              {% for i in range(t.rating.stars) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - t.rating.stars) %}<i class="bi bi-star"></i>{% endfor %}
+            </span>
+            {% else %}
+            <button class="btn-cr sm" onclick="openModal('rate_{{ t.id }}')">
+              <i class="bi bi-star"></i> Rate Technician
+            </button>
+            {% endif %}
+          {% endif %}
+        </div>
+        
+      </div>
+    </div>
+  {% else %}
+    <div style="padding:30px;text-align:center;color:var(--mt)">No service requests found.</div>
+  {% endfor %}
+  </div>
+</div>
+
+{# ═══════════════════════════════════════════════════════════════
+   MODALS SECTION - Placed outside flow containers
+══════════════════════════════════════════════════════════════ #}
+
+{% for t in tickets %}
+<div class="modal-ov" id="viewTicket_{{ t.id }}">
+  <div class="modal-box" style="max-width: 550px;">
+    <div class="modal-hdr">
+      <span class="modal-title">Ticket Details</span>
+      <button class="modal-close" onclick="closeModal('viewTicket_{{ t.id }}')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
+      
+      <div style="margin-bottom: 20px;">
+        <h3 class="syne" style="font-size: 20px; color: var(--nv); margin-bottom: 8px;">{{ t.title }}</h3>
+        <div class="df g8 aic" style="flex-wrap: wrap;">
+          <span class="badge b-{{ t.status }}">{{ t.status }}</span>
+          <span class="badge b-{{ t.priority }}">{{ t.priority }}</span>
+          <span style="font-size: 12px; color: var(--mt);"><i class="bi bi-calendar3"></i> {{ t.date }}</span>
+        </div>
+      </div>
+
+      <div class="modal-section" style="margin-top: 0;">Request Information</div>
+      <div class="detail-grid">
+        <div>
+          <div class="detail-lbl">Property & Unit</div>
+          <div class="detail-val">{{ t.prop.name }} <span style="color:var(--mt)">· {{ t.unit.unit_number }}</span></div>
+        </div>
+        <div>
+          <div class="detail-lbl">Tenant</div>
+          <div class="detail-val">{{ t.tenant.name }}</div>
+        </div>
+        <div>
+          <div class="detail-lbl">Category</div>
+          <div class="detail-val">{{ t.category }}</div>
+        </div>
+        <div>
+          <div class="detail-lbl">Ticket ID</div>
+          <div class="detail-val">#{{ t.id }}</div>
+        </div>
+      </div>
+
+      <div class="modal-section">Description</div>
+      <div style="font-size: 14px; color: var(--tx); line-height: 1.6; background: var(--bg); padding: 16px; border-radius: 8px;">
+        {{ t.description | default('No description provided by the tenant.', true) }}
+      </div>
+
+      <div class="modal-section">Assignment & Status</div>
+      {% if t.technician %}
+        <div style="display: flex; gap: 12px; align-items: center; background: rgba(13,58,107,.04); padding: 14px; border-radius: 8px; border: 1px solid rgba(13,58,107,.1);">
+          <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--nv); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700;">
+            <i class="bi bi-wrench"></i>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 14.5px; color: var(--nv);">{{ t.technician }}</div>
+            <div style="font-size: 12px; color: var(--mt);">Assigned Technician</div>
+          </div>
+        </div>
+      {% else %}
+        <div style="font-size: 13.5px; color: var(--mt); font-style: italic; background: #fff; border: 1px dashed var(--bd); padding: 14px; border-radius: 8px; text-align: center;">
+          <i class="bi bi-person-x" style="font-size: 18px; display: block; margin-bottom: 4px; opacity: 0.5;"></i>
+          No technician assigned yet.
+        </div>
+      {% endif %}
+
+      {% if t.rating %}
+      <div class="modal-section">Tenant Rating</div>
+      <div style="background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.25); padding: 14px; border-radius: 8px;">
+        <div class="star-display" style="font-size:16px">
+          {% for i in range(t.rating.stars) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - t.rating.stars) %}<i class="bi bi-star"></i>{% endfor %}
+          <span style="font-size:13px;color:var(--mt);margin-left:6px">{{ t.rating.stars }}/5 · {{ t.rating.created_at.strftime('%b %d, %Y') }}</span>
+        </div>
+        {% if t.rating.comment %}
+        <div style="font-size:13px;color:var(--tx);margin-top:8px;line-height:1.5">"{{ t.rating.comment }}"</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{% if role == 'Admin' %}
+  {% for t in tickets if t.status == 'open' %}
+  <div class="modal-ov" id="assign_{{ t.id }}">
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <span class="modal-title">Assign & Prioritize</span>
+        <button class="modal-close" onclick="closeModal('assign_{{ t.id }}')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="POST" action="{{ url_for('assign_ticket', ticket_id=t.id) }}">
+          
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+            <div class="fg" style="margin-bottom:0;">
+              <label class="form-label">Technician</label>
+              <select class="form-sel" name="technician">
+                {% for tc in technicians %}<option value="{{ tc }}">{{ tc }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="fg" style="margin-bottom:0;">
+              <label class="form-label">Priority</label>
+              <select class="form-sel" name="priority">
+                <option value="low" {% if t.priority == 'low' %}selected{% endif %}>Low</option>
+                <option value="medium" {% if t.priority == 'medium' %}selected{% endif %}>Medium</option>
+                <option value="high" {% if t.priority == 'high' %}selected{% endif %}>High</option>
+                <option value="urgent" {% if t.priority == 'urgent' %}selected{% endif %}>Urgent</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="fg">
+            <label class="form-label">Note</label>
+            <textarea class="form-ctrl" name="note" rows="2" placeholder="Instructions…"></textarea>
+          </div>
+          
+          <div class="df g8">
+            <button type="button" class="btn-ghost" style="flex:1" onclick="closeModal('assign_{{ t.id }}')">Cancel</button>
+            <button type="submit" class="btn-nv" style="flex:1">Assign Request</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+{# ── Tenant: rate technician modals (resolved, assigned, not yet rated) ── #}
+{% if role == 'Tenant' %}
+  {% for t in tickets if t.status == 'resolved' and t.technician and not t.rating %}
+  <div class="modal-ov" id="rate_{{ t.id }}">
+    <div class="modal-box" style="max-width:440px">
+      <div class="modal-hdr">
+        <span class="modal-title">Rate {{ t.technician }}</span>
+        <button class="modal-close" onclick="closeModal('rate_{{ t.id }}')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:13px;color:var(--mt);margin-bottom:14px">
+          How was the service for <strong style="color:var(--tx)">{{ t.title }}</strong>?
+        </div>
+        <form method="POST" action="{{ url_for('rate_technician', ticket_id=t.id) }}">
+          <div class="star-input" id="starInput_{{ t.id }}" style="margin-bottom:16px">
+            {% for s in [1,2,3,4,5] %}
+            <i class="bi bi-star" data-star="{{ s }}" onclick="setStars({{ t.id }}, {{ s }})"></i>
+            {% endfor %}
+          </div>
+          <input type="hidden" name="stars" id="starsVal_{{ t.id }}" value=""/>
+          <div class="fg">
+            <label class="form-label">Comment (optional)</label>
+            <textarea class="form-ctrl" name="comment" rows="3" maxlength="1000"
+                      placeholder="Tell us about the technician's work…"></textarea>
+          </div>
+          <div class="df g8" style="margin-top:16px">
+            <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                    onclick="closeModal('rate_{{ t.id }}')">Cancel</button>
+            <button type="submit" class="btn-cr" style="flex:1;justify-content:center"
+                    onclick="return validateStars({{ t.id }})">
+              <i class="bi bi-star-fill"></i> Submit Rating
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <script>
+    function setStars(tid, n) {
+      document.getElementById('starsVal_' + tid).value = n;
+      const stars = document.querySelectorAll('#starInput_' + tid + ' i');
+      stars.forEach(function (el, idx) {
+        el.className = (idx < n) ? 'bi bi-star-fill' : 'bi bi-star';
+      });
+    }
+    function validateStars(tid) {
+      const v = document.getElementById('starsVal_' + tid).value;
+      if (!v) { alert('Please select a star rating first.'); return false; }
+      return true;
+    }
+  </script>
+{% endif %}
+
+<div class="modal-ov" id="newSRModal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <span class="modal-title">New Request</span>
+      <button class="modal-close" onclick="closeModal('newSRModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="{{ url_for('submit_service') }}">
+        <div class="fg">
+          <label class="form-label">Issue Title</label>
+          <input class="form-ctrl" name="title" required/>
+        </div>
+        
+        <div class="g2" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div class="fg" style="margin-bottom:0;">
+            <label class="form-label">Property</label>
+            <select class="form-sel" name="property">
+              {% for p in properties %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="fg" style="margin-bottom:0;">
+            <label class="form-label">Unit</label>
+            <input class="form-ctrl" name="unit"/>
+          </div>
+        </div>
+        
+        <div class="g2" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div class="fg" style="margin-bottom:0; grid-column: {% if role != 'Admin' %}span 2{% else %}span 1{% endif %};">
+            <label class="form-label">Category</label>
+            <select class="form-sel" name="category">
+              <option>Plumbing</option><option>Electrical</option><option>HVAC</option><option>General</option>
+            </select>
+          </div>
+          
+          {% if role == 'Admin' %}
+          <div class="fg" style="margin-bottom:0;">
+            <label class="form-label">Priority</label>
+            <select class="form-sel" name="priority">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+          {% endif %}
+        </div>
+        
+        <div class="fg">
+          <label class="form-label">Description</label>
+          <textarea class="form-ctrl" name="description" rows="3"></textarea>
+        </div>
+        <button type="submit" class="btn-cr" style="width:100%">Submit Request</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

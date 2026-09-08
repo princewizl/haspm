@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block page_title %}{% if role=='Tenant' %}My Invoices{% else %}Invoices & Payments{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+{% if role == 'Landlord' or (role == 'Admin' and has_perm('edit_payments')) %}
+<button class="btn-cr" onclick="openModal('newInvModal')">
+  <i class="bi bi-plus-lg"></i> <span class="hide-mobile">New Invoice</span>
+</button>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ─ Layout Flexibility ─ */
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+  .stat-card-custom { padding: 18px 20px; background: var(--wh); border-radius: 12px; border: 1px solid var(--bd); }
+  
+  /* Text protection helpers */
+  .truncate-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  
+  /* Pay modal header */
+  .pay-hdr { background: var(--nv); padding: 18px 22px; display: flex; align-items: center; justify-content: space-between; }
+
+  /* Payment method tab buttons */
+  .pay-method-btn {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 10px 12px; border-radius: 9px; border: 1.5px solid var(--bd);
+    background: var(--wh); color: var(--mt); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: all .15s; font-family: inherit;
+  }
+  .pay-method-btn:hover:not(:disabled) { border-color: var(--nv); color: var(--nv); }
+  .pay-method-btn.active-method { border-color: var(--nv); color: var(--nv); background: var(--nv-l); }
+  .pay-method-btn:disabled { opacity: .4; cursor: not-allowed; }
+  
+  /* Form Grid */
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ─ Responsive Adjustments ─ */
+  @media (max-width: 992px) {
+    .stat-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  }
+
+  @media (max-width: 768px) {
+    .stat-grid { grid-template-columns: 1fr; gap: 12px; }
+    .g2 { grid-template-columns: 1fr; gap: 12px; } /* Stack form inputs */
+    
+    .card-hdr { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .card-hdr .df { width: 100%; justify-content: space-between; }
+    
+    .pay-hdr { padding: 16px; }
+  }
+  
+  @media (max-width: 480px) {
+    .hide-mobile { display: none; } /* Show only icon on small mobile screens */
+    .truncate-text { max-width: 110px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if role == 'Admin' and not paystack_configured %}
+<div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:18px;font-size:13.5px">
+  <i class="bi bi-exclamation-triangle-fill" style="color:#D97706;font-size:18px;flex-shrink:0"></i>
+  <div style="flex:1">
+    <span class="fw6" style="color:#92400E">Paystack not configured —</span>
+    <span style="color:#78350F"> tenants cannot pay online until you add your API keys.</span>
+  </div>
+  <a href="{{ url_for('settings') }}" class="btn-nv sm" style="white-space:nowrap;flex-shrink:0">
+    <i class="bi bi-key"></i> Configure Now
+  </a>
+</div>
+{% endif %}
+<div class="stat-grid">
+  {% if hide_amounts %}
+  {% set kpi_rows = [('Pending Invoices',pending_count,'nv'),('Paid Invoices',paid_count,'gr'),('Overdue Invoices',overdue_count,'cr')] %}
+  {% else %}
+  {% set kpi_rows = [('Total Billed',fmt(total),'nv'),('Collected',fmt(paid),'gr'),('Outstanding',fmt(outstanding),'cr')] %}
+  {% endif %}
+  {% for lbl,val,col in kpi_rows %}
+  <div class="stat-card-custom" style="border-left:4px solid var(--{{ col }})">
+    <div style="font-size:11px;font-weight:700;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">{{ lbl }}</div>
+    <div class="syne fw7 text-{{ col }}" style="font-size:22px">{{ val }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-hdr">
+    <span class="card-title">{% if role=='Tenant' %}My Invoices{% else %}All Invoices{% endif %}</span>
+    <div class="df g8">
+      <button class="btn-ghost sm"><i class="bi bi-funnel"></i> Filter</button>
+      <button class="btn-ghost sm"><i class="bi bi-download"></i> Export</button>
+    </div>
+  </div>
+  
+  <div class="tw">
+    <table class="ht">
+      <thead>
+        <tr>
+          <th>Invoice</th>
+          {% if role!='Tenant' %}<th>Tenant</th>{% endif %}
+          <th>Property</th>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Due Date</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr style="{% if inv.status=='paid' %}background:rgba(250, 252, 255, 0.5){% endif %}">
+          <td class="fw7 text-nv" style="white-space:nowrap">{{ inv.inv_number }}</td>
+          
+          {% if role!='Tenant' %}
+          <td>
+            <div class="df aic g8" style="min-width:0">
+              <div class="av nv" style="width:28px;height:28px;font-size:11px;flex-shrink:0">
+                {{ inv.tenant[0] if inv.tenant and inv.tenant != '—' else '?' }}
+              </div>
+              <span class="truncate-text" style="font-size:13px">{{ inv.tenant }}</span>
+            </div>
+          </td>
+          {% endif %}
+          
+          <td style="font-size:12.5px;color:var(--mt);min-width:120px">
+            <div class="truncate-text">{{ inv.property }}</div>
+            <small>Unit {{ inv.unit }}</small>
+          </td>
+          
+          <td><span class="badge b-in-progress" style="font-size:10.5px;white-space:nowrap">{{ inv.type }}</span></td>
+          
+          <td class="fw7" style="font-size:14px;white-space:nowrap">{% if hide_amounts %}<span style="color:var(--mt)" title="Amounts hidden for your department">•••</span>{% else %}{{ fmt(inv.amount) }}{% endif %}</td>
+          
+          <td style="font-size:13px;white-space:nowrap;color:{% if inv.status=='overdue' %}var(--cr){% else %}var(--mt){% endif %};font-weight:{% if inv.status=='overdue' %}600{% else %}400{% endif %}">
+            {% if inv.status=='overdue' %}<i class="bi bi-exclamation-triangle-fill" style="margin-right:3px"></i>{% endif %}{{ inv.due }}
+          </td>
+          
+          <td><span class="badge b-{{ inv.status }}">{{ inv.status }}</span></td>
+          
+          <td>
+            {% if inv.status == 'paid' %}
+              <span style="color:var(--gr);font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px;white-space:nowrap">
+                <i class="bi bi-check-circle-fill"></i> Paid
+              </span>
+            {% elif inv.has_pending_transfer %}
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#B45309;font-weight:600;white-space:nowrap;background:#FFFBEB;padding:4px 10px;border-radius:99px;border:1px solid #FCD34D">
+                <i class="bi bi-hourglass-split"></i> Awaiting Confirmation
+              </span>
+            {% elif role == 'Admin' and has_perm('edit_payments') %}
+              <div class="df g8">
+                <form method="POST" action="{{ url_for('mark_invoice_paid', inv_id=inv.id) }}" style="margin:0;">
+                  <button type="submit" class="btn-nv sm" style="white-space:nowrap" title="Mark as Paid">
+                    <i class="bi bi-check2-circle"></i> Mark Paid
+                  </button>
+                </form>
+                <form method="POST" action="{{ url_for('delete_invoice', inv_id=inv.id) }}" style="margin:0;" onsubmit="return confirm('Delete invoice {{ inv.inv_number }}?');">
+                  <button type="submit" class="btn-cr sm" title="Delete"><i class="bi bi-trash"></i></button>
+                </form>
+              </div>
+            {% elif role == 'Admin' %}
+              <span style="font-size:12px;color:var(--mt);white-space:nowrap">View only</span>
+            {% elif role == 'Landlord' %}
+              <span style="font-size:12px;color:var(--mt);white-space:nowrap">Awaiting tenant</span>
+            {% else %}
+              {# Tenant — show Pay Now which opens the method-selection modal #}
+              <button class="btn-cr sm" onclick="openModal('pay{{ loop.index }}')" style="white-space:nowrap">
+                <i class="bi bi-credit-card"></i> Pay Now
+              </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if role=='Tenant' %}
+  {% for inv in invoices %}
+    {% if inv.status!='paid' %}
+    <div class="modal-ov" id="pay{{ loop.index }}">
+      <div class="modal-box" style="max-width:400px;width:90%;margin:20px auto">
+        <div class="pay-hdr">
+          <div class="df aic" style="gap:10px;min-width:0">
+            <div style="background:#fff;border-radius:7px;padding:4px 10px;font-weight:800;font-size:14px;color:#0D3A6B;flex-shrink:0">PAY</div>
+            <div style="min-width:0">
+              <div class="truncate-text" style="color:#fff;font-weight:700;font-size:14px;max-width:180px">HS Property Mgmt</div>
+              <div class="truncate-text" style="color:rgba(255,255,255,.75);font-size:12px;max-width:180px">{{ inv.tenant }}</div>
+            </div>
+          </div>
+          <button class="modal-close" style="color:#fff" onclick="closeModal('pay{{ loop.index }}')">&times;</button>
+        </div>
+        <div class="modal-body">
+
+          {# Amount summary #}
+          <div style="text-align:center;margin-bottom:16px">
+            <div class="syne fw7" style="font-size:32px;color:var(--tx)">{{ fmt(inv.amount) }}</div>
+            <div style="color:var(--mt);font-size:13px;margin-top:2px">{{ inv.inv_number }} &middot; {{ inv.type }} &middot; Due {{ inv.due }}</div>
+          </div>
+
+          {# Method selector tabs #}
+          {% set idx = loop.index %}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px">
+            <button type="button" id="tab-ps-{{ idx }}" onclick="switchPayMethod({{ idx }},'paystack')"
+                    class="pay-method-btn active-method"
+                    {% if inv.amount > PAYSTACK_LIMIT or not paystack_configured %}disabled title="Not available for this invoice"{% endif %}>
+              <i class="bi bi-credit-card"></i> Card (Paystack)
+            </button>
+            <button type="button" id="tab-bt-{{ idx }}" onclick="switchPayMethod({{ idx }},'transfer')"
+                    class="pay-method-btn"
+                    {% if not bank_cfg.BANK_ACCOUNT_NUMBER %}disabled title="Bank transfer not configured"{% endif %}>
+              <i class="bi bi-bank"></i> Bank Transfer
+            </button>
+          </div>
+
+          {# -- PAYSTACK PANEL -- #}
+          <div id="panel-ps-{{ idx }}">
+            {% if inv.amount > PAYSTACK_LIMIT %}
+            <div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:9px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#92400E;display:flex;align-items:center;gap:8px">
+              <i class="bi bi-exclamation-triangle-fill" style="flex-shrink:0"></i>
+              Paystack is not available for payments above ₦10,000,000. Please use Bank Transfer.
+            </div>
+            {% elif not paystack_configured %}
+            <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:9px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#991B1B;display:flex;align-items:center;gap:8px">
+              <i class="bi bi-x-circle-fill" style="flex-shrink:0"></i>
+              Online card payment is not configured. Contact your admin.
+            </div>
+            {% else %}
+            <form method="POST" action="{{ url_for('pay_invoice', inv_id=inv.id) }}">
+              <button type="submit" style="width:100%;background:#00c3f7;color:#fff;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+                <i class="bi bi-box-arrow-up-right"></i> Continue to Paystack &rarr;
+              </button>
+            </form>
+            <p style="text-align:center;font-size:11px;color:var(--mt);margin-top:10px;display:flex;align-items:center;justify-content:center;gap:4px">
+              <i class="bi bi-lock-fill"></i> Redirected to Paystack's secure checkout
+            </p>
+            {% endif %}
+          </div>
+
+          {# -- BANK TRANSFER PANEL -- #}
+          <div id="panel-bt-{{ idx }}" style="display:none">
+            {% if bank_cfg.BANK_ACCOUNT_NUMBER %}
+            {# Bank details display #}
+            <div style="background:var(--nv-l);border:1px solid #BFDBFE;border-radius:10px;padding:14px;margin-bottom:16px">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--nv);margin-bottom:10px">Transfer To</div>
+              <div style="display:flex;flex-direction:column;gap:6px;font-size:13.5px">
+                <div class="df" style="justify-content:space-between">
+                  <span style="color:var(--mt)">Bank</span>
+                  <span class="fw6">{{ bank_cfg.BANK_NAME or '—' }}</span>
+                </div>
+                <div class="df" style="justify-content:space-between">
+                  <span style="color:var(--mt)">Account Number</span>
+                  <span class="fw6" style="font-family:monospace;font-size:15px;letter-spacing:.05em">{{ bank_cfg.BANK_ACCOUNT_NUMBER }}</span>
+                </div>
+                <div class="df" style="justify-content:space-between">
+                  <span style="color:var(--mt)">Account Name</span>
+                  <span class="fw6">{{ bank_cfg.BANK_ACCOUNT_NAME or '—' }}</span>
+                </div>
+                <div class="df" style="justify-content:space-between">
+                  <span style="color:var(--mt)">Amount</span>
+                  <span class="fw6 text-nv" style="font-size:15px">{{ fmt(inv.amount) }}</span>
+                </div>
+              </div>
+              {% if bank_cfg.BANK_TRANSFER_NOTE %}
+              <div style="margin-top:10px;padding-top:10px;border-top:1px solid #BFDBFE;font-size:12px;color:var(--nv)">
+                <i class="bi bi-info-circle" style="margin-right:4px"></i>{{ bank_cfg.BANK_TRANSFER_NOTE }}
+              </div>
+              {% endif %}
+            </div>
+            {# Proof form #}
+            <form method="POST" action="{{ url_for('submit_bank_transfer', inv_id=inv.id) }}">
+              <div class="fg">
+                <label class="form-label">Bank Reference / Teller No. *</label>
+                <input class="form-ctrl" name="bank_ref" placeholder="e.g. FBN2406150001" required style="font-family:monospace"/>
+              </div>
+              <div class="fg">
+                <label class="form-label">Date of Transfer</label>
+                <input class="form-ctrl" type="date" name="transfer_date"/>
+              </div>
+              <div class="fg">
+                <label class="form-label">Additional Note <span style="font-weight:400;font-size:10px">(optional)</span></label>
+                <input class="form-ctrl" name="note" placeholder="e.g. Transferred from GTBank"/>
+              </div>
+              <button type="submit" style="width:100%;background:var(--nv);color:#fff;border:none;border-radius:10px;padding:13px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+                <i class="bi bi-send-check"></i> Submit Transfer Proof
+              </button>
+            </form>
+            <p style="text-align:center;font-size:11px;color:var(--mt);margin-top:10px">
+              Admin will verify and confirm your payment within 24 hours.
+            </p>
+            {% else %}
+            <div style="text-align:center;padding:24px;color:var(--mt)">
+              <i class="bi bi-bank" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>
+              Bank transfer details not yet configured. Contact your admin.
+            </div>
+            {% endif %}
+          </div>
+
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  {% endfor %}
+{% endif %}
+
+{# ── ADMIN: Pending Bank Transfer Review Panel (Finance/Management) ── #}
+{% if role == 'Admin' and pending_transfers and not hide_amounts %}
+<div class="card" style="margin-bottom:20px;border:1.5px solid #FCD34D">
+  <div class="card-hdr" style="background:#FFFBEB">
+    <span class="card-title" style="color:#92400E">
+      <i class="bi bi-hourglass-split" style="margin-right:6px;color:#D97706"></i>
+      Pending Bank Transfer Confirmations
+    </span>
+    <span class="badge" style="background:#FEF3C7;color:#92400E;font-size:11px;padding:3px 10px;border-radius:99px;font-weight:700">
+      {{ pending_transfers | length }} pending
+    </span>
+  </div>
+  <div class="tw">
+    <table class="ht">
+      <thead>
+        <tr>
+          <th>Invoice</th>
+          <th>Tenant</th>
+          <th>Amount</th>
+          <th>Bank Ref</th>
+          <th>Transfer Date</th>
+          <th>Submitted</th>
+          <th>Note</th>
+          <th style="text-align:right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for claim in pending_transfers %}
+        <tr>
+          <td class="fw6 text-nv" style="white-space:nowrap;font-size:13px">
+            {{ claim.invoice.inv_number if claim.invoice else '—' }}
+          </td>
+          <td>
+            <div class="fw6" style="font-size:13px">{{ claim.tenant.name }}</div>
+            <div style="font-size:11.5px;color:var(--mt)">{{ claim.tenant.email }}</div>
+          </td>
+          <td class="fw6" style="white-space:nowrap">{{ fmt(claim.amount) }}</td>
+          <td style="font-family:monospace;font-size:13px;color:var(--nv);font-weight:600">{{ claim.bank_ref or '—' }}</td>
+          <td style="font-size:12.5px;color:var(--mt);white-space:nowrap">
+            {{ claim.transfer_date.strftime('%b %d, %Y') if claim.transfer_date else '—' }}
+          </td>
+          <td style="font-size:12px;color:var(--mt);white-space:nowrap">
+            {{ claim.submitted_at.strftime('%b %d, %H:%M') }}
+          </td>
+          <td style="font-size:12px;color:var(--mt);max-width:160px">{{ claim.note or '—' }}</td>
+          <td style="text-align:right">
+            <div class="df g8" style="justify-content:flex-end">
+              <form method="POST" action="{{ url_for('confirm_transfer', claim_id=claim.id) }}" style="margin:0"
+                    onsubmit="return confirm('Confirm this bank transfer and mark the invoice as paid?')">
+                <button type="submit" class="btn-nv sm" style="white-space:nowrap">
+                  <i class="bi bi-check2-circle"></i> Confirm
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('reject_transfer', claim_id=claim.id) }}" style="margin:0"
+                    onsubmit="return confirm('Reject this transfer claim? The invoice will remain unpaid.')">
+                <button type="submit" class="btn-cr sm" style="white-space:nowrap">
+                  <i class="bi bi-x-circle"></i> Reject
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if role in ['Admin','Landlord'] %}
+<div class="modal-ov" id="newInvModal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <span class="modal-title">Create Invoice</span>
+      <button class="modal-close" onclick="closeModal('newInvModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="{{ url_for('create_invoice') }}">
+        <div class="fg">
+          <label class="form-label">Tenant</label>
+          <select class="form-sel" name="tenant_id" required>
+            <option value="" disabled selected>-- Select Tenant --</option>
+            {% for t in tenants %}
+              <option value="{{ t.id }}">{{ t.name }} ({{ t.email }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="fg">
+          <label class="form-label">Type</label>
+          <select class="form-sel" name="type" required>
+            <option value="Rent">Rent</option>
+            <option value="Service Charge">Service Charge</option>
+            <option value="Utility">Utility</option>
+            <option value="One-time Fee">One-time Fee</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label class="form-label">Amount (₦)</label>
+          <input class="form-ctrl" type="number" step="0.01" name="amount" placeholder="0.00" required/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Due Date</label>
+          <input class="form-ctrl" type="date" name="due" required/>
+        </div>
+        
+        <div class="df g8" style="margin-top:20px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('newInvModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function switchPayMethod(idx, method) {
+  const ps   = document.getElementById('panel-ps-' + idx);
+  const bt   = document.getElementById('panel-bt-' + idx);
+  const tabPs = document.getElementById('tab-ps-' + idx);
+  const tabBt = document.getElementById('tab-bt-' + idx);
+  if (method === 'paystack') {
+    ps.style.display = ''; bt.style.display = 'none';
+    tabPs.classList.add('active-method'); tabBt.classList.remove('active-method');
+  } else {
+    bt.style.display = ''; ps.style.display = 'none';
+    tabBt.classList.add('active-method'); tabPs.classList.remove('active-method');
+  }
+}
+
+/* Auto-switch to bank transfer when Paystack tab is disabled */
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[id^="tab-ps-"]').forEach(btn => {
+    if (btn.disabled) {
+      const idx = btn.id.replace('tab-ps-', '');
+      const btBtn = document.getElementById('tab-bt-' + idx);
+      if (btBtn && !btBtn.disabled) switchPayMethod(idx, 'transfer');
+    }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,1358 @@
+{% extends "base.html" %}
+{% block title %}Finance{% endblock %}
+{% block page_title %}{% if role == 'Tenant' %}My Finances{% else %}Finance & Reconciliation{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex;align-items:center;gap:8px">
+  {% if role in ['Admin','Landlord'] %}
+  <div style="position:relative" id="exportDropWrap">
+    <button class="btn-ghost sm" onclick="toggleExportDrop()" id="exportDropBtn">
+      <i class="bi bi-download"></i> Export <i class="bi bi-chevron-down" style="font-size:9px"></i>
+    </button>
+    <div id="exportDrop" style="display:none;position:absolute;right:0;top:calc(100%+6px);background:var(--wh);border:1.5px solid var(--bd);border-radius:10px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.1);z-index:300;overflow:hidden">
+      <a href="{{ url_for('finance_export_csv') }}" class="exp-opt"><i class="bi bi-file-earmark-spreadsheet" style="color:var(--gr)"></i> Export CSV</a>
+      <a href="{{ url_for('finance_export_pdf') }}" class="exp-opt"><i class="bi bi-file-earmark-pdf" style="color:var(--cr)"></i> Export PDF</a>
+    </div>
+  </div>
+  {% if role == 'Admin' %}
+  <button class="btn-cr sm" onclick="openModal('addExpenseModal')"><i class="bi bi-plus-lg"></i> Add Expense</button>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  /* ── Shared ── */
+  .exp-opt{display:flex;align-items:center;gap:9px;padding:10px 14px;font-size:13px;color:var(--tx);transition:background .15s;cursor:pointer;text-decoration:none;}
+  .exp-opt:hover{background:var(--bg);}
+  .sec-title{font-size:12px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;display:flex;align-items:center;gap:7px;}
+  .sec-title::after{content:'';flex:1;height:1px;background:var(--bd);}
+
+  /* ── Tabs ── */
+  .fin-tabs{display:flex;gap:2px;background:var(--bg);border-radius:12px;padding:4px;margin-bottom:20px;flex-wrap:wrap;}
+  .fin-tab{padding:7px 14px;border:none;border-radius:9px;font-size:13px;font-weight:500;color:var(--mt);cursor:pointer;background:transparent;transition:all .2s;white-space:nowrap;}
+  .fin-tab:hover{color:var(--tx);}
+  .fin-tab.active{background:var(--wh);color:var(--nv);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.08);}
+  .tab-pane{display:none;}
+  .tab-pane.active{display:block;}
+
+  /* ── Charts ── */
+  .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:22px;}
+  .chart-card{background:var(--wh);border-radius:14px;border:1px solid var(--bd);box-shadow:0 1px 4px rgba(0,0,0,.04);padding:18px 20px;}
+  .chart-card-title{font-size:13px;font-weight:600;color:var(--tx);margin-bottom:4px;}
+  .chart-card-sub{font-size:11.5px;color:var(--mt);margin-bottom:14px;}
+
+  /* ── Aging pills ── */
+  .aging-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid transparent;}
+  .ag-current{background:#ECFDF5;color:#047857;border-color:#D1FAE5;}
+  .ag-30{background:#FFFBEB;color:#B45309;border-color:#FDE68A;}
+  .ag-60{background:#FFF7ED;color:#C2410C;border-color:#FED7AA;}
+  .ag-90{background:#FFF0F3;color:var(--cr);border-color:#FED7E2;}
+  .ag-over{background:#4B0010;color:#fff;border-color:#4B0010;}
+
+  /* ── Rate bars ── */
+  .rate-bar-wrap{background:var(--bg);border-radius:99px;height:7px;flex:1;overflow:hidden;min-width:60px;}
+  .rate-bar-fill{height:100%;border-radius:99px;transition:width .6s ease;}
+
+  /* ── History timeline ── */
+  .hist-timeline{list-style:none;padding:0;margin:0;position:relative;}
+  .hist-timeline::before{content:'';position:absolute;left:14px;top:0;bottom:0;width:2px;background:var(--bd);}
+  .hist-item{display:flex;gap:12px;padding:10px 0;position:relative;}
+  .hist-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;margin-left:10px;position:relative;z-index:1;border:2px solid var(--wh);}
+  .hist-dot.confirmed{background:var(--gr);}
+  .hist-dot.pending{background:var(--wn);}
+  .hist-content{flex:1;min-width:0;}
+
+  /* ── Collapse ── */
+  .collapse-hdr{cursor:pointer;user-select:none;}
+  .collapse-icon{transition:transform .25s ease;font-size:14px;color:var(--mt);}
+  .collapsed .collapse-icon{transform:rotate(-90deg);}
+
+  /* ── KPI delta ── */
+  .delta{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px;}
+  .delta-up{background:#ECFDF5;color:#047857;}
+  .delta-dn{background:#FFF0F3;color:var(--cr);}
+
+  /* ── Scope banner ── */
+  .scope-banner{background:var(--nv-l);border:1px solid #BFDBFE;border-radius:10px;padding:10px 16px;display:flex;align-items:center;gap:9px;margin-bottom:18px;font-size:13px;color:var(--nv);}
+
+  /* ── Balance pill colours ── */
+  .bal-clear{color:var(--gr);font-weight:600;}
+  .bal-outstanding{color:var(--cr);font-weight:600;}
+  .bal-overpaid{color:var(--nv);font-weight:600;}
+
+  /* ── Ledger entry types ── */
+  .entry-charge{color:var(--cr);}
+  .entry-payment,.entry-credit{color:var(--gr);}
+  .entry-adjustment{color:var(--wn);}
+
+  /* ── Earnings cards ── */
+  .earn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+  .earn-card{background:var(--bg);border-radius:12px;padding:16px;border:1px solid var(--bd);}
+  .earn-label{font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;}
+  .earn-value{font-size:22px;font-weight:700;color:var(--tx);}
+
+  /* ── Tenant balance cards ── */
+  .tenant-fin-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
+  .tfin-card{background:var(--wh);border-radius:14px;border:1px solid var(--bd);padding:18px 20px;}
+  .tfin-lbl{font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+  .tfin-val{font-size:22px;font-weight:700;}
+
+  /* ── Responsive ── */
+  @media(max-width:1100px){.chart-grid,.earn-grid,.tenant-fin-grid{grid-template-columns:1fr 1fr;}}
+  @media(max-width:768px){.chart-grid,.earn-grid,.tenant-fin-grid{grid-template-columns:1fr;}.col-hide-md{display:none;}}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ═══════════════════════════════════════════════════
+   TENANT VIEW
+════════════════════════════════════════════════════ #}
+{% if role == 'Tenant' %}
+
+<div class="tenant-fin-grid">
+  <div class="tfin-card">
+    <div class="tfin-lbl">Monthly Rent</div>
+    <div class="tfin-val text-nv">{{ fmt(tenancy.monthly_rent) if tenancy else '—' }}</div>
+    <div style="font-size:12px;color:var(--mt);margin-top:4px">{{ tenancy.unit.prop.name ~ ' · ' ~ tenancy.unit.unit_number if tenancy else 'No active lease' }}</div>
+  </div>
+  <div class="tfin-card">
+    <div class="tfin-lbl">Total Paid</div>
+    <div class="tfin-val text-gr">{{ fmt(total_paid) }}</div>
+    <div style="font-size:12px;color:var(--mt);margin-top:4px">Confirmed payments</div>
+  </div>
+  <div class="tfin-card">
+    <div class="tfin-lbl">Outstanding</div>
+    <div class="tfin-val {{ 'text-cr' if outstanding > 0 else 'text-gr' }}">{{ fmt(outstanding) }}</div>
+    <div style="font-size:12px;color:var(--mt);margin-top:4px">{{ 'Amount overdue' if outstanding > 0 else 'Account current' }}</div>
+  </div>
+  <div class="tfin-card">
+    <div class="tfin-lbl">Credit Balance</div>
+    <div class="tfin-val {{ 'text-nv' if prepaid > 0 else 'text-mt' }}">{{ fmt(prepaid) }}</div>
+    <div style="font-size:12px;color:var(--mt);margin-top:4px">Prepaid / deposit</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start">
+
+  {# Payment History #}
+  <div class="card">
+    <div class="card-hdr">
+      <span class="card-title"><i class="bi bi-receipt" style="color:var(--nv);margin-right:6px"></i>Payment History</span>
+    </div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Ref</th><th>Invoice</th><th>Amount</th><th>Date</th><th>Method</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for t in transactions %}
+          <tr>
+            <td style="font-size:12.5px;font-weight:600;color:var(--nv)">{{ t.ref }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ t.invoice }}</td>
+            <td style="font-weight:600">{{ fmt(t.amount) }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ t.date }}</td>
+            <td style="font-size:12px">{{ t.method }}</td>
+            <td><span class="badge b-{{ t.status }}">{{ t.status }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" style="text-align:center;padding:32px;color:var(--mt)">
+            <i class="bi bi-receipt" style="font-size:24px;opacity:.3;display:block;margin-bottom:8px"></i>No payments recorded yet.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# Right column: Outstanding invoices + running balance #}
+  <div style="display:flex;flex-direction:column;gap:16px">
+
+    {# Running Balance card #}
+    <div class="card">
+      <div class="card-hdr"><span class="card-title">Account Summary</span></div>
+      <div class="card-body">
+        {% for lbl, val, col in [('Total Charged', fmt(total_charged), 'cr'), ('Total Paid', fmt(total_paid), 'gr'), ('Running Balance', ('+' if balance >= 0 else '') ~ fmt(balance|abs), 'nv' if balance > 0 else 'cr' if balance < 0 else 'gr')] %}
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--bg)">
+          <span style="color:var(--mt);font-size:13px">{{ lbl }}</span>
+          <span style="font-weight:600;font-size:13px;color:var(--{{ col }})">{{ val }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# Outstanding invoices #}
+    {% if out_invoices %}
+    <div class="card">
+      <div class="card-hdr"><span class="card-title" style="color:var(--cr)"><i class="bi bi-exclamation-circle" style="margin-right:5px"></i>Outstanding</span></div>
+      <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">
+        {% for inv in out_invoices %}
+        <div style="background:var(--cr-l);border-radius:10px;padding:12px;border-left:3px solid var(--cr)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:12.5px;font-weight:600;color:var(--tx)">{{ inv.inv_number }}</div>
+              <div style="font-size:11.5px;color:var(--mt)">Due {{ inv.due_date.strftime('%b %d, %Y') }}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-weight:700;color:var(--cr)">{{ fmt(inv.amount) }}</div>
+              <span class="badge b-{{ inv.status }}">{{ inv.status }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+{# Expenses I Paid #}
+{% if my_expenses %}
+<div style="margin-top:20px" class="card">
+  <div class="card-hdr"><span class="card-title"><i class="bi bi-receipt-cutoff" style="color:var(--wn);margin-right:6px"></i>Expenses I Paid</span></div>
+  <div class="tw">
+    <table class="ht">
+      <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Property</th><th>Amount</th><th>Status</th><th>Receipt</th></tr></thead>
+      <tbody>
+        {% for e in my_expenses %}
+        <tr>
+          <td style="font-size:12px;color:var(--mt)">{{ e.expense_date.strftime('%b %d, %Y') if e.expense_date else '—' }}</td>
+          <td style="font-size:13px;font-weight:500">{{ e.description }}</td>
+          <td><span class="badge b-in-progress" style="font-size:10.5px">{{ e.category }}</span></td>
+          <td style="font-size:12px;color:var(--mt)">{{ e.prop.name if e.prop else '—' }}</td>
+          <td style="font-weight:600">{{ fmt(e.amount) }}</td>
+          <td><span class="badge b-{{ e.status }}">{{ e.status }}</span></td>
+          <td>
+            {% if e.receipt_filename %}
+            <a href="{{ url_for('finance_expense_receipt', exp_id=e.id) }}" class="btn-ghost sm"><i class="bi bi-download"></i></a>
+            {% else %}<span style="color:var(--mt);font-size:12px">—</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--mt);font-size:13px">No expenses recorded for you.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ═══════════════════════════════════════════════════
+   ADMIN / LANDLORD VIEW
+════════════════════════════════════════════════════ #}
+{% else %}
+
+{% if role == 'Landlord' %}
+<div class="scope-banner">
+  <i class="bi bi-building" style="font-size:15px;flex-shrink:0"></i>
+  <span>Showing data for your <strong>{{ landlord_property_count }} propert{{ 'ies' if landlord_property_count != 1 else 'y' }}</strong> only.</span>
+</div>
+{% endif %}
+
+{# KPI CARDS #}
+<div class="stat-grid" style="margin-bottom:20px">
+  {% for lbl, val, ic, col, delta_val, delta_up in kpi_cards %}
+  <div class="stat-card">
+    <div>
+      <div class="sl">{{ lbl }}</div>
+      <div class="sv text-{{ col }}" style="font-size:19px">{{ val }}</div>
+      {% if delta_val %}
+      <div style="margin-top:5px">
+        <span class="delta {{ 'delta-up' if delta_up else 'delta-dn' }}">
+          <i class="bi bi-arrow-{{ 'up' if delta_up else 'down' }}-short" style="font-size:13px"></i>{{ delta_val }}
+        </span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="sic" style="background:rgba({% if col=='cr' %}201,24,74{% elif col=='gr' %}16,185,129{% elif col=='wn' %}245,158,11{% else %}13,58,107{% endif %},.1)">
+      <i class="bi bi-{{ ic }}" style="font-size:20px;color:var(--{{ col }})"></i>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# TAB BAR #}
+<div class="fin-tabs">
+  <button class="fin-tab active" onclick="switchTab('overview', this)"><i class="bi bi-grid-1x2"></i> Overview</button>
+  <button class="fin-tab" onclick="switchTab('ledger', this)"><i class="bi bi-journal-text"></i> Rent Ledger</button>
+  <button class="fin-tab" onclick="switchTab('expenses', this)"><i class="bi bi-receipt-cutoff"></i> Expenses</button>
+  <button class="fin-tab" onclick="switchTab('earnings', this)"><i class="bi bi-cash-stack"></i> Earnings</button>
+  {% if role == 'Admin' %}<button class="fin-tab" onclick="switchTab('pending', this)" id="tabPendingBtn"><i class="bi bi-hourglass-split"></i> Pending {% if pending_txns %}<span class="nav-badge" style="margin-left:4px">{{ pending_txns|length }}</span>{% endif %}</button>{% endif %}
+  <button class="fin-tab" onclick="switchTab('forecast', this)"><i class="bi bi-graph-up"></i> Forecast</button>
+  <button class="fin-tab" onclick="switchTab('performance', this)"><i class="bi bi-bar-chart"></i> Performance</button>
+</div>
+
+{# ─────────── TAB: OVERVIEW ─────────── #}
+<div id="tab-overview" class="tab-pane active">
+  <div class="sec-title">Analytics</div>
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="chart-card-title">Revenue vs Expenses</div>
+      <div class="chart-card-sub">Monthly comparison — last 6 months</div>
+      <canvas id="barChart" height="180"></canvas>
+      <div style="display:flex;gap:14px;margin-top:10px;justify-content:center">
+        <div style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mt)"><div style="width:10px;height:10px;border-radius:2px;background:var(--cr)"></div> Revenue</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mt)"><div style="width:10px;height:10px;border-radius:2px;background:var(--nv)"></div> Expenses</div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Collection Trend</div>
+      <div class="chart-card-sub">Cumulative confirmed payments — last 6 months</div>
+      <canvas id="lineChart" height="180"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Invoice Status Breakdown</div>
+      <div class="chart-card-sub">Portfolio-wide invoice distribution</div>
+      <div style="display:flex;align-items:center;gap:20px">
+        <div style="position:relative;width:160px;height:160px;flex-shrink:0">
+          <canvas id="donutChart" width="160" height="160"></canvas>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
+            <span style="font-size:22px;font-weight:600;color:var(--tx)">{{ invoice_status_counts.total }}</span>
+            <span style="font-size:11px;color:var(--mt)">invoices</span>
+          </div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:8px">
+          {% for label, count, col in [('Paid', invoice_status_counts.paid, '#10B981'),('Pending', invoice_status_counts.pending, '#F59E0B'),('Overdue', invoice_status_counts.overdue, '#C9184A')] %}
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="width:9px;height:9px;border-radius:2px;background:{{ col }};flex-shrink:0"></div>
+              <span style="font-size:12.5px;color:var(--mt)">{{ label }}</span>
+            </div>
+            <span style="font-size:13px;font-weight:600;color:var(--tx)">{{ count }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">Collection Rate by Property</div>
+      <div class="chart-card-sub">% of expected rent collected</div>
+      <canvas id="hbarChart" height="180"></canvas>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:16px">
+
+      {# Aging Report #}
+      <div class="card" id="agingCard">
+        <div class="card-hdr collapse-hdr" onclick="toggleCollapse('agingCard')">
+          <span class="card-title"><i class="bi bi-clock-history" style="color:var(--wn);margin-right:6px"></i>Invoice Aging Report</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              {% if aging_summary.current > 0 %}<span class="aging-pill ag-current">{{ aging_summary.current }} current</span>{% endif %}
+              {% if aging_summary.d30 > 0 %}<span class="aging-pill ag-30">{{ aging_summary.d30 }} 1–30d</span>{% endif %}
+              {% if aging_summary.d60 > 0 %}<span class="aging-pill ag-60">{{ aging_summary.d60 }} 31–60d</span>{% endif %}
+              {% if aging_summary.d90 > 0 %}<span class="aging-pill ag-90">{{ aging_summary.d90 }} 61–90d</span>{% endif %}
+              {% if aging_summary.over90 > 0 %}<span class="aging-pill ag-over">{{ aging_summary.over90 }} 90d+</span>{% endif %}
+            </div>
+            <i class="bi bi-chevron-down collapse-icon"></i>
+          </div>
+        </div>
+        <div class="collapse-body">
+          <div class="tw">
+            <table class="ht">
+              <thead><tr><th>Tenant</th><th class="col-hide-md">Property / Unit</th><th>Invoice</th><th>Amount</th><th>Due Date</th><th>Days Overdue</th><th>Bucket</th></tr></thead>
+              <tbody>
+                {% for row in aging_rows %}
+                <tr>
+                  <td><a href="{{ url_for('user_profile', user_id=row.tenant_id) }}" style="font-size:13px;font-weight:600;color:var(--nv);text-decoration:none">{{ row.tenant }}</a><div style="font-size:11.5px;color:var(--mt)">{{ row.email }}</div></td>
+                  <td class="col-hide-md" style="font-size:12.5px;color:var(--mt)">{{ row.property }} / {{ row.unit }}</td>
+                  <td style="font-size:12.5px;color:var(--nv);font-weight:600">{{ row.inv_number }}</td>
+                  <td style="font-weight:600">{{ fmt(row.amount) }}</td>
+                  <td style="font-size:12.5px;color:var(--mt)">{{ row.due_date }}</td>
+                  <td>{% if row.days_overdue == 0 %}<span style="font-size:12.5px;color:var(--gr);font-weight:600">Current</span>{% else %}<span style="font-size:13px;font-weight:600;color:{{ '#B45309' if row.days_overdue<=30 else '#C2410C' if row.days_overdue<=60 else '#C9184A' if row.days_overdue<=90 else '#4B0010' }}">{{ row.days_overdue }}d</span>{% endif %}</td>
+                  <td><span class="aging-pill {{ 'ag-current' if row.bucket=='current' else 'ag-30' if row.bucket=='1-30' else 'ag-60' if row.bucket=='31-60' else 'ag-90' if row.bucket=='61-90' else 'ag-over' }}">{{ row.bucket }}</span></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--mt)"><i class="bi bi-check-circle" style="font-size:24px;opacity:.3;display:block;margin-bottom:8px;color:var(--gr)"></i>No overdue invoices.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {# Payment Records #}
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">Payment Records</span>
+          <select class="form-sel sm" id="txnStatusFilter" onchange="filterTxns()" style="width:130px;padding:5px 28px 5px 10px;font-size:12px">
+            <option value="">All Status</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+        <div class="tw">
+          <table class="ht" id="txnTable">
+            <thead><tr><th>Ref</th><th>Tenant</th><th class="col-hide-md">Invoice</th><th>Amount</th><th class="col-hide-md">Date</th><th>Method</th><th>Status</th>{% if role=='Admin' %}<th>Actions</th>{% endif %}</tr></thead>
+            <tbody>
+              {% for t in transactions %}
+              <tr data-status="{{ t.status }}">
+                <td style="font-size:12.5px;font-weight:600;color:var(--nv)">{{ t.ref }}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:7px">
+                    <div style="width:26px;height:26px;border-radius:50%;background:var(--nv-l);color:var(--nv);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0">{{ t.tenant[0] }}</div>
+                    <div>
+                      <a href="{{ url_for('user_profile', user_id=t.tenant_id) }}" style="font-size:13px;font-weight:600;color:var(--nv);text-decoration:none;display:block">{{ t.tenant }}</a>
+                      <button class="hist-link" onclick="loadHistory({{ t.tenant_id }}, '{{ t.tenant }}')" style="background:none;border:none;padding:0;font-size:11px;color:var(--nv);cursor:pointer;font-family:inherit;text-decoration:underline;text-underline-offset:2px">history</button>
+                    </div>
+                  </div>
+                </td>
+                <td class="col-hide-md" style="font-size:12px;color:var(--mt)">{{ t.invoice }}</td>
+                <td style="font-weight:600;font-size:13.5px">{{ fmt(t.amount) }}</td>
+                <td class="col-hide-md" style="font-size:12.5px;color:var(--mt)">{{ t.date }}</td>
+                <td style="font-size:12.5px">{{ t.method }}</td>
+                <td><span class="badge b-{{ t.status }}">{{ t.status }}</span></td>
+                {% if role == 'Admin' %}
+                <td>
+                  {% if t.status == 'pending' %}
+                  <button class="btn-nv sm" onclick="openModal('confirm_{{ t.id }}')"><i class="bi bi-check-lg"></i> Confirm</button>
+                  {% else %}
+                  <span style="font-size:12px;color:var(--gr);font-weight:600;display:flex;align-items:center;gap:3px"><i class="bi bi-check-circle-fill"></i> Reconciled</span>
+                  {% endif %}
+                </td>
+                {% endif %}
+              </tr>
+              {% else %}
+              <tr><td colspan="{{ '8' if role=='Admin' else '7' }}" style="text-align:center;padding:36px;color:var(--mt)"><i class="bi bi-receipt" style="font-size:26px;opacity:.3;display:block;margin-bottom:8px"></i>No payment records found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if role == 'Landlord' %}<div style="padding:10px 20px;background:var(--nv-l);border-top:1px solid var(--bd);font-size:13px;color:var(--nv);display:flex;align-items:center;gap:8px"><i class="bi bi-info-circle-fill"></i> Only Admins can confirm transactions.</div>{% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      {# P&L Summary #}
+      <div class="card">
+        <div class="card-hdr"><span class="card-title">P&L Summary</span></div>
+        <div class="card-body">
+          <div style="font-size:26px;font-weight:600;color:var(--gr);margin-bottom:4px">{{ fmt(net) }}</div>
+          <div style="font-size:12.5px;color:var(--mt);margin-bottom:14px">Net profit · <strong class="text-gr">{{ margin }}%</strong> margin</div>
+          <div class="pb-wrap" style="height:8px;margin-bottom:16px">
+            <div class="pb-fill" style="width:{{ margin }}%;background:linear-gradient(90deg,var(--nv),var(--gr))"></div>
+          </div>
+          {% for k, v, col in [('Total Revenue', fmt(total_rev), 'cr'),('Total Expenses', fmt(total_exp), 'nv'),('Net Profit', fmt(net), 'gr')] %}
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--bg)">
+            <span style="color:var(--mt);font-size:13px">{{ k }}</span>
+            <span style="font-weight:600;font-size:13px;color:var(--{{ col }})">{{ v }}</span>
+          </div>
+          {% endfor %}
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0">
+            <span style="color:var(--mt);font-size:13px">Collection Rate</span>
+            <span style="font-weight:600;font-size:13px;color:var(--nv)">{{ overall_collection_rate }}%</span>
+          </div>
+        </div>
+      </div>
+      {# Collection by Property #}
+      <div class="card">
+        <div class="card-hdr"><span class="card-title">Collection by Property</span></div>
+        <div style="padding:14px 18px;display:flex;flex-direction:column;gap:12px">
+          {% for prop in collection_by_property %}
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
+              <div style="min-width:0">
+                <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">{{ prop.name }}</div>
+                <div style="font-size:11px;color:var(--mt)">{{ prop.collected_units }}/{{ prop.total_units }} units paid</div>
+              </div>
+              <span style="font-size:13px;font-weight:600;flex-shrink:0;margin-left:8px;color:{{ 'var(--gr)' if prop.rate>=80 else 'var(--wn)' if prop.rate>=50 else 'var(--cr)' }}">{{ prop.rate }}%</span>
+            </div>
+            <div class="rate-bar-wrap"><div class="rate-bar-fill" style="width:{{ prop.rate }}%;background:{{ 'var(--gr)' if prop.rate>=80 else 'var(--wn)' if prop.rate>=50 else 'var(--cr)' }}"></div></div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+              <span style="font-size:11px;color:var(--mt)">{{ fmt(prop.collected) }} collected</span>
+              <span style="font-size:11px;color:var(--mt)">of {{ fmt(prop.expected) }}</span>
+            </div>
+          </div>
+          {% else %}<div style="text-align:center;padding:16px;color:var(--mt);font-size:13px">No properties.</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>{# end tab-overview #}
+
+{# ─────────── TAB: RENT LEDGER ─────────── #}
+<div id="tab-ledger" class="tab-pane">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div class="sec-title" style="margin-bottom:0">Running Balances — All Active Tenants</div>
+    {% if role == 'Admin' %}
+    <button class="btn-ghost sm" onclick="openModal('adjustModal')"><i class="bi bi-plus-circle"></i> Manual Adjustment</button>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Tenant</th><th>Property / Unit</th><th>Monthly Rent</th><th>Total Charged</th><th>Total Paid</th><th>Balance</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for row in ledger_rows %}
+          <tr>
+            <td>
+              <a href="{{ url_for('user_profile', user_id=row.tenant_id) }}" style="font-size:13px;font-weight:600;color:var(--nv);text-decoration:none;display:block">{{ row.tenant }}</a>
+              <div style="font-size:11.5px;color:var(--mt)">{{ row.email }}</div>
+            </td>
+            <td style="font-size:12.5px;color:var(--mt)">{{ row.property }} / {{ row.unit }}</td>
+            <td style="font-weight:600">{{ fmt(row.monthly_rent) }}</td>
+            <td style="color:var(--cr);font-weight:600">{{ fmt(row.total_charged) }}</td>
+            <td style="color:var(--gr);font-weight:600">{{ fmt(row.total_paid) }}</td>
+            <td>
+              <span class="bal-{{ row.bal_status }}" style="font-size:13px">
+                {% if row.balance >= 0 %}+{% endif %}{{ fmt(row.balance) }}
+              </span>
+            </td>
+            <td>
+              <span class="badge {%if row.bal_status=='clear'%}b-confirmed{%elif row.bal_status=='overpaid'%}b-in-progress{%else%}b-overdue{%endif%}">
+                {{ row.bal_status }}
+              </span>
+            </td>
+            <td>
+              <button class="btn-ghost sm" onclick="loadLedger({{ row.tenant_id }}, '{{ row.tenant }}')">
+                <i class="bi bi-list-ul"></i> Ledger
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" style="text-align:center;padding:36px;color:var(--mt)">
+            <i class="bi bi-journal-text" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>No active tenancies found.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>{# end tab-ledger #}
+
+{# ─────────── TAB: EXPENSES ─────────── #}
+<div id="tab-expenses" class="tab-pane">
+  {# Expense KPI strip #}
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px">
+    {% for lbl, val, col in [('Total Expenses', fmt(total_exp_all), 'cr'),('Paid', fmt(total_exp_paid), 'gr'),('Unpaid', fmt(total_exp_unp), 'wn')] %}
+    <div class="card" style="border:none">
+      <div class="card-body" style="padding:14px 18px">
+        <div style="font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">{{ lbl }}</div>
+        <div style="font-size:22px;font-weight:700;color:var(--{{ col }})">{{ val }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# Category breakdown #}
+  {% if exp_by_cat %}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-hdr"><span class="card-title">By Category</span></div>
+    <div style="padding:14px 18px;display:flex;flex-wrap:wrap;gap:8px">
+      {% set total_cat = namespace(v=total_exp_all if total_exp_all > 0 else 1) %}
+      {% for cat, amt in exp_by_cat.items() %}
+      <div style="background:var(--bg);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:3px">
+        <div style="font-size:11.5px;color:var(--mt);font-weight:600">{{ cat }}</div>
+        <div style="font-size:16px;font-weight:700;color:var(--tx)">{{ fmt(amt) }}</div>
+        <div style="font-size:11px;color:var(--mt)">{{ ((amt/total_cat.v)*100)|round(1) }}% of total</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-hdr">
+      <span class="card-title">All Expenses</span>
+      <div style="display:flex;gap:8px">
+        <select class="form-sel sm" id="expStatusFilter" onchange="filterExpenses()" style="width:120px;padding:5px 28px 5px 10px;font-size:12px">
+          <option value="">All Status</option>
+          <option value="paid">Paid</option>
+          <option value="unpaid">Unpaid</option>
+        </select>
+      </div>
+    </div>
+    <div class="tw">
+      <table class="ht" id="expTable">
+        <thead><tr><th>Ref</th><th>Property</th><th>Category</th><th>Description</th><th>Amount</th><th class="col-hide-md">Vendor</th><th>Date</th><th>Paid By</th><th>Status</th>{% if role=='Admin' %}<th>Actions</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for e in expenses %}
+          <tr data-estatus="{{ e.status }}">
+            <td style="font-size:12px;font-weight:600;color:var(--nv)">{{ e.exp_number }}</td>
+            <td style="font-size:12.5px">{{ e.property }}{% if e.unit != '—' %} / {{ e.unit }}{% endif %}</td>
+            <td><span class="badge b-in-progress" style="font-size:10.5px">{{ e.category }}</span></td>
+            <td style="font-size:12.5px;max-width:200px">
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.description }}</div>
+              {% if e.notes %}<div style="font-size:11px;color:var(--mt)">{{ e.notes[:60] }}{% if e.notes|length > 60 %}…{% endif %}</div>{% endif %}
+            </td>
+            <td style="font-weight:600;color:var(--cr)">{{ fmt(e.amount) }}</td>
+            <td class="col-hide-md" style="font-size:12px;color:var(--mt)">{{ e.vendor }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ e.expense_date }}</td>
+            <td style="font-size:12.5px">
+              {{ e.paid_by or '—' }}
+              {% if e.tenant_payer %}<div style="font-size:11px">{% if e.tenant_payer_id %}<a href="{{ url_for('user_profile', user_id=e.tenant_payer_id) }}" style="color:var(--nv)">{{ e.tenant_payer }}</a>{% else %}<span style="color:var(--mt)">{{ e.tenant_payer }}</span>{% endif %}</div>{% endif %}
+            </td>
+            <td><span class="badge b-{{ e.status }}">{{ e.status }}</span></td>
+            {% if role == 'Admin' %}
+            <td>
+              <div style="display:flex;gap:5px">
+                {% if e.has_receipt %}<a href="{{ url_for('finance_expense_receipt', exp_id=e.id) }}" class="btn-ghost sm" title="Download Receipt"><i class="bi bi-download"></i></a>{% endif %}
+                <button class="btn-ghost sm" onclick="openEditExpense({{ e|tojson }})" title="Edit"><i class="bi bi-pencil"></i></button>
+                <form method="POST" action="{{ url_for('finance_expense_delete', exp_id=e.id) }}" onsubmit="return confirm('Delete {{ e.exp_number }}?')">
+                  <button type="submit" class="btn-ocr sm"><i class="bi bi-trash"></i></button>
+                </form>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="{{ '10' if role=='Admin' else '9' }}" style="text-align:center;padding:36px;color:var(--mt)">
+            <i class="bi bi-receipt-cutoff" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px"></i>
+            No expenses recorded yet.{% if role == 'Admin' %} <button class="btn-cr sm" onclick="openModal('addExpenseModal')" style="margin-left:8px"><i class="bi bi-plus-lg"></i> Add First Expense</button>{% endif %}
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>{# end tab-expenses #}
+
+{# ─────────── TAB: EARNINGS ─────────── #}
+<div id="tab-earnings" class="tab-pane">
+  {% for ll in ll_earnings %}
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-hdr">
+      <span class="card-title">
+        <i class="bi bi-person-badge" style="color:var(--nv);margin-right:6px"></i>
+        {% if role == 'Admin' %}{{ ll.name }}<span style="font-size:11.5px;color:var(--mt);font-weight:400;margin-left:6px">{{ ll.email }}</span>{% else %}Earnings Summary{% endif %}
+      </span>
+      {% if role == 'Landlord' %}
+      <button class="btn-ghost sm" onclick="openModal('payoutModal')"><i class="bi bi-arrow-up-circle"></i> Request Payout</button>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <div class="earn-grid">
+        <div class="earn-card">
+          <div class="earn-label">Total Income</div>
+          <div class="earn-value text-gr">{{ fmt(ll.total_income) }}</div>
+          <div style="font-size:12px;color:var(--mt);margin-top:4px">Confirmed rent payments</div>
+        </div>
+        <div class="earn-card">
+          <div class="earn-label">Total Expenses</div>
+          <div class="earn-value text-cr">{{ fmt(ll.total_expenses) }}</div>
+          <div style="font-size:12px;color:var(--mt);margin-top:4px">Paid property expenses</div>
+        </div>
+        <div class="earn-card">
+          <div class="earn-label">Net Earnings</div>
+          <div class="earn-value {{ 'text-gr' if ll.net >= 0 else 'text-cr' }}">{{ fmt(ll.net) }}</div>
+          <div style="font-size:12px;color:var(--mt);margin-top:4px">Income minus expenses</div>
+        </div>
+        <div class="earn-card">
+          <div class="earn-label">Pending Payouts</div>
+          <div class="earn-value text-wn">{{ fmt(ll.pending_payouts) }}</div>
+          <div style="font-size:12px;color:var(--mt);margin-top:4px">Awaiting disbursement</div>
+        </div>
+        <div class="earn-card" style="border:2px solid var(--nv);background:var(--nv-l)">
+          <div class="earn-label" style="color:var(--nv)">Withdrawable</div>
+          <div class="earn-value text-nv">{{ fmt(ll.withdrawable) }}</div>
+          <div style="font-size:12px;color:var(--nv);margin-top:4px">Ready to withdraw</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {# Pending Payouts table #}
+  {% if pending_payouts %}
+  <div class="card">
+    <div class="card-hdr"><span class="card-title"><i class="bi bi-hourglass-split" style="color:var(--wn);margin-right:6px"></i>Pending Payout Requests</span></div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Ref</th>{% if role=='Admin' %}<th>Landlord</th>{% endif %}<th>Amount</th><th>Requested</th><th>Notes</th>{% if role=='Admin' %}<th>Actions</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for po in pending_payouts %}
+          <tr>
+            <td style="font-size:12.5px;font-weight:600;color:var(--nv)">{{ po.payout_number }}</td>
+            {% if role == 'Admin' %}<td><a href="{{ url_for('user_profile', user_id=po.landlord_id) }}" style="font-size:13px;font-weight:600;color:var(--nv);text-decoration:none">{{ po.landlord.name }}</a></td>{% endif %}
+            <td style="font-weight:600;color:var(--wn)">{{ fmt(po.amount) }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ po.requested_at.strftime('%b %d, %Y') }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ po.notes or '—' }}</td>
+            {% if role == 'Admin' %}
+            <td>
+              <div style="display:flex;gap:5px">
+                <form method="POST" action="{{ url_for('finance_payout_complete', payout_id=po.id) }}">
+                  <input type="hidden" name="action" value="complete">
+                  <button type="submit" class="btn-nv sm"><i class="bi bi-check-lg"></i> Approve</button>
+                </form>
+                <form method="POST" action="{{ url_for('finance_payout_complete', payout_id=po.id) }}" onsubmit="return confirm('Reject this payout?')">
+                  <input type="hidden" name="action" value="reject">
+                  <button type="submit" class="btn-ocr sm"><i class="bi bi-x-lg"></i></button>
+                </form>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>{# end tab-earnings #}
+
+{# ─────────── TAB: PENDING (Admin only) ─────────── #}
+{% if role == 'Admin' %}
+<div id="tab-pending" class="tab-pane">
+  <div class="card">
+    <div class="card-hdr"><span class="card-title"><i class="bi bi-hourglass-split" style="color:var(--wn);margin-right:6px"></i>Pending Transactions — Awaiting Confirmation</span></div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Ref</th><th>Tenant</th><th>Invoice</th><th>Amount</th><th>Date</th><th>Method</th><th>Actions</th></tr></thead>
+        <tbody>
+          {% for t in pending_txns %}
+          <tr>
+            <td style="font-size:12.5px;font-weight:600;color:var(--nv)">{{ t.ref }}</td>
+            <td><a href="{{ url_for('user_profile', user_id=t.tenant_id) }}" style="font-size:13px;font-weight:600;color:var(--nv);text-decoration:none">{{ t.tenant }}</a></td>
+            <td style="font-size:12px;color:var(--mt)">{{ t.invoice }}</td>
+            <td style="font-weight:600">{{ fmt(t.amount) }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ t.date }}</td>
+            <td style="font-size:12.5px">{{ t.method }}</td>
+            <td>
+              <button class="btn-nv sm" onclick="openModal('confirm_{{ t.id }}')"><i class="bi bi-check-lg"></i> Confirm</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--mt)">
+            <i class="bi bi-check-circle" style="font-size:28px;opacity:.3;display:block;margin-bottom:8px;color:var(--gr)"></i>
+            No pending transactions — all payments confirmed.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}{# end tab-pending #}
+
+{# ─────────── TAB: FORECAST ─────────── #}
+<div id="tab-forecast" class="tab-pane">
+  <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start">
+    <div class="chart-card">
+      <div class="chart-card-title">Cashflow Forecast</div>
+      <div class="chart-card-sub">Projected rent income — next 12 months (based on active leases)</div>
+      <canvas id="forecastChart" height="220"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-hdr"><span class="card-title">Monthly Projections</span></div>
+      <div class="tw" style="max-height:370px;overflow-y:auto">
+        <table class="ht">
+          <thead><tr><th>Month</th><th>Projected Income</th></tr></thead>
+          <tbody>
+            {% for f in forecast %}
+            <tr>
+              <td style="font-size:13px;font-weight:500">{{ f.label }}</td>
+              <td style="font-weight:600;color:var(--gr)">{{ fmt(f.amount) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="2" style="text-align:center;padding:20px;color:var(--mt)">No active leases to forecast.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>{# end tab-forecast #}
+
+{# ─────────── TAB: PERFORMANCE ─────────── #}
+<div id="tab-performance" class="tab-pane">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:20px">
+    {% for lbl, val, col, ic in [('On Time', perf.on_time, 'gr', 'check-circle-fill'),('Late', perf.late, 'wn', 'clock-history'),('Unpaid', perf.unpaid, 'cr', 'x-circle-fill')] %}
+    <div class="card">
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">{{ lbl }}</div>
+            <div style="font-size:32px;font-weight:700;color:var(--{{ col }})">{{ val }}</div>
+            <div style="font-size:12px;color:var(--mt);margin-top:2px">invoices</div>
+          </div>
+          <i class="bi bi-{{ ic }}" style="font-size:36px;color:var(--{{ col }});opacity:.25"></i>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">Collection by Property</span></div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Property</th><th>Units Paid</th><th>Expected</th><th>Collected</th><th>Rate</th></tr></thead>
+        <tbody>
+          {% for prop in collection_by_property %}
+          <tr>
+            <td style="font-size:13px;font-weight:600">{{ prop.name }}</td>
+            <td style="font-size:12.5px;color:var(--mt)">{{ prop.collected_units }}/{{ prop.total_units }}</td>
+            <td style="font-weight:600">{{ fmt(prop.expected) }}</td>
+            <td style="font-weight:600;color:var(--gr)">{{ fmt(prop.collected) }}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="rate-bar-wrap" style="width:100px"><div class="rate-bar-fill" style="width:{{ prop.rate }}%;background:{{ 'var(--gr)' if prop.rate>=80 else 'var(--wn)' if prop.rate>=50 else 'var(--cr)' }}"></div></div>
+                <span style="font-size:13px;font-weight:600;color:{{ 'var(--gr)' if prop.rate>=80 else 'var(--wn)' if prop.rate>=50 else 'var(--cr)' }}">{{ prop.rate }}%</span>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--mt)">No data available.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>{# end tab-performance #}
+
+{% endif %}{# end admin/landlord view #}
+
+
+{# ═══════════════════════════════════════════════
+   MODALS
+══════════════════════════════════════════════ #}
+
+{# Confirm transaction modals (Admin) #}
+{% if role == 'Admin' %}
+{% for t in transactions %}{% if t.status == 'pending' %}
+<div class="modal-ov" id="confirm_{{ t.id }}">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-hdr">
+      <span class="modal-title">Confirm Payment — {{ t.ref }}</span>
+      <button class="modal-close" onclick="closeModal('confirm_{{ t.id }}')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg);border-radius:12px;padding:16px;margin-bottom:16px">
+        <div class="g2" style="gap:12px">
+          {% for k, v in [('Reference', t.ref),('Tenant', t.tenant),('Amount', fmt(t.amount)),('Date', t.date),('Method', t.method),('Invoice', t.invoice)] %}
+          <div><div style="font-size:11px;color:var(--mt);font-weight:600;margin-bottom:2px">{{ k }}</div><div style="font-weight:600;font-size:13.5px">{{ v }}</div></div>
+          {% endfor %}
+        </div>
+      </div>
+      <p style="color:var(--mt);font-size:13px;margin-bottom:20px">Confirming marks the invoice as <strong style="color:var(--gr)">paid</strong>. This cannot be undone.</p>
+      <form method="POST" action="{{ url_for('confirm_txn', txn_id=t.id) }}">
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('confirm_{{ t.id }}')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center"><i class="bi bi-check-circle"></i> Confirm & Reconcile</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}{% endfor %}
+
+{# Add Expense Modal #}
+<div class="modal-ov" id="addExpenseModal">
+  <div class="modal-box" style="max-width:580px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-plus-circle" style="color:var(--cr);margin-right:6px"></i>Add Expense</span>
+      <button class="modal-close" onclick="closeModal('addExpenseModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="{{ url_for('finance_expense_add') }}" enctype="multipart/form-data">
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Property *</label>
+            <select name="property_id" class="form-sel" required onchange="loadUnitsForExpense(this.value)">
+              <option value="">Select property…</option>
+              {% for p in all_properties %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Unit (optional)</label>
+            <select name="unit_id" class="form-sel" id="expUnitSel">
+              <option value="">All units / general</option>
+            </select>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Category *</label>
+            <select name="category" class="form-sel" required>
+              {% for c in expense_categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Expense Date *</label>
+            <input type="date" name="expense_date" class="form-ctrl" required value="{{ today_str }}">
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Description *</label>
+          <input type="text" name="description" class="form-ctrl" required placeholder="e.g. Plumbing repair unit A2">
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Amount (₦) *</label>
+            <input type="number" name="amount" class="form-ctrl" step="0.01" min="0.01" required placeholder="0.00">
+          </div>
+          <div class="fg">
+            <label class="form-label">Vendor</label>
+            <input type="text" name="vendor" class="form-ctrl" placeholder="e.g. ABC Plumbers Ltd">
+          </div>
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-sel" onchange="togglePaidBy(this.value)">
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
+            </select>
+          </div>
+          <div class="fg" id="paidByWrap">
+            <label class="form-label">Paid By</label>
+            <select name="paid_by" class="form-sel" onchange="toggleTenantPayer(this.value)">
+              <option value="">— select —</option>
+              <option value="Admin">Admin</option>
+              <option value="Landlord">Landlord</option>
+              <option value="Tenant">Tenant</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg" id="tenantPayerWrap" style="display:none">
+          <label class="form-label">Tenant Who Paid</label>
+          <select name="paid_by_tenant_id" class="form-sel">
+            <option value="">Select tenant…</option>
+            {% for t in all_tenants %}<option value="{{ t.id }}">{{ t.name }} ({{ t.email }})</option>{% endfor %}
+          </select>
+        </div>
+        <div class="fg">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" class="form-ctrl" rows="2" placeholder="Optional notes…" style="resize:vertical"></textarea>
+        </div>
+        <div class="fg">
+          <label class="form-label">Receipt / Invoice (PDF, JPG, PNG)</label>
+          <input type="file" name="receipt" class="form-ctrl" accept=".pdf,.jpg,.jpeg,.png">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('addExpenseModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center"><i class="bi bi-plus-lg"></i> Add Expense</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# Edit Expense Modal #}
+<div class="modal-ov" id="editExpenseModal">
+  <div class="modal-box" style="max-width:580px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-pencil" style="color:var(--nv);margin-right:6px"></i>Edit Expense</span>
+      <button class="modal-close" onclick="closeModal('editExpenseModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" id="editExpenseForm" action="" enctype="multipart/form-data">
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Category</label>
+            <select name="category" id="editCategory" class="form-sel">
+              {% for c in expense_categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Expense Date</label>
+            <input type="date" name="expense_date" id="editDate" class="form-ctrl">
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Description</label>
+          <input type="text" name="description" id="editDesc" class="form-ctrl">
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Amount (₦)</label>
+            <input type="number" name="amount" id="editAmount" class="form-ctrl" step="0.01" min="0.01">
+          </div>
+          <div class="fg">
+            <label class="form-label">Vendor</label>
+            <input type="text" name="vendor" id="editVendor" class="form-ctrl">
+          </div>
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Status</label>
+            <select name="status" id="editStatus" class="form-sel">
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Paid By</label>
+            <select name="paid_by" id="editPaidBy" class="form-sel">
+              <option value="">— select —</option>
+              <option value="Admin">Admin</option>
+              <option value="Landlord">Landlord</option>
+              <option value="Tenant">Tenant</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" id="editNotes" class="form-ctrl" rows="2" style="resize:vertical"></textarea>
+        </div>
+        <div class="fg">
+          <label class="form-label">Replace Receipt (optional)</label>
+          <input type="file" name="receipt" class="form-ctrl" accept=".pdf,.jpg,.jpeg,.png">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('editExpenseModal')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center"><i class="bi bi-check-lg"></i> Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# Ledger Adjustment Modal #}
+<div class="modal-ov" id="adjustModal">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-plus-circle" style="color:var(--wn);margin-right:6px"></i>Manual Ledger Adjustment</span>
+      <button class="modal-close" onclick="closeModal('adjustModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="{{ url_for('finance_ledger_adjust') }}">
+        <div class="fg">
+          <label class="form-label">Tenant *</label>
+          <select name="tenant_id" class="form-sel" required>
+            <option value="">Select tenant…</option>
+            {% for row in ledger_rows %}<option value="{{ row.tenant_id }}">{{ row.tenant }} — {{ row.property }}/{{ row.unit }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Type *</label>
+            <select name="entry_type" class="form-sel" required>
+              <option value="credit">Credit (add to balance)</option>
+              <option value="charge">Charge (deduct from balance)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Amount (₦) *</label>
+            <input type="number" name="amount" class="form-ctrl" step="0.01" min="0.01" required>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Date *</label>
+          <input type="date" name="entry_date" class="form-ctrl" required value="{{ today_str }}">
+        </div>
+        <div class="fg">
+          <label class="form-label">Description</label>
+          <input type="text" name="description" class="form-ctrl" placeholder="e.g. Deposit refund, correction, etc.">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('adjustModal')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center"><i class="bi bi-check-lg"></i> Apply Adjustment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# end admin modals #}
+
+{# Landlord payout request modal #}
+{% if role == 'Landlord' %}
+<div class="modal-ov" id="payoutModal">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-arrow-up-circle" style="color:var(--nv);margin-right:6px"></i>Request Payout</span>
+      <button class="modal-close" onclick="closeModal('payoutModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="{{ url_for('finance_payout_request') }}">
+        <div class="fg">
+          <label class="form-label">Amount (₦) *</label>
+          <input type="number" name="amount" class="form-ctrl" step="0.01" min="1" required placeholder="Enter withdrawal amount">
+        </div>
+        <div class="fg">
+          <label class="form-label">Notes (optional)</label>
+          <textarea name="notes" class="form-ctrl" rows="2" style="resize:vertical" placeholder="e.g. Bank account details, purpose…"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('payoutModal')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center"><i class="bi bi-arrow-up-circle"></i> Submit Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# Tenant History Modal (AJAX) #}
+<div class="modal-ov" id="histModal">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hdr">
+      <span class="modal-title" id="histModalTitle">Payment History</span>
+      <button class="modal-close" onclick="closeModal('histModal')">&times;</button>
+    </div>
+    <div class="modal-body" id="histModalBody">
+      <div style="text-align:center;padding:30px;color:var(--mt)"><i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>Loading…</div>
+    </div>
+  </div>
+</div>
+
+{# Ledger Detail Modal (AJAX) #}
+<div class="modal-ov" id="ledgerModal">
+  <div class="modal-box" style="max-width:680px">
+    <div class="modal-hdr">
+      <span class="modal-title" id="ledgerModalTitle">Rent Ledger</span>
+      <button class="modal-close" onclick="closeModal('ledgerModal')">&times;</button>
+    </div>
+    <div class="modal-body" id="ledgerModalBody">
+      <div style="text-align:center;padding:30px;color:var(--mt)"><i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>Loading…</div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block extra_scripts %}
+<script>
+/* ── Chart data ── */
+const rd    = {{ (rev_data   | default([])) | tojson }};
+const donut = {{ (donut_data | default([0,0,0])) | tojson }};
+const hbar  = {{ (hbar_data  | default([])) | tojson }};
+const fc    = {{ (forecast   | default([])) | tojson }};
+
+const OPTS = { responsive:true, maintainAspectRatio:true, plugins:{legend:{display:false}} };
+
+{% if role != 'Tenant' %}
+/* Bar chart — Revenue vs Expenses */
+if (document.getElementById('barChart')) {
+  new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: {
+      labels: rd.map(d=>d.month),
+      datasets:[
+        {label:'Revenue',  data:rd.map(d=>d.rev), backgroundColor:'rgba(201,24,74,0.8)',  borderRadius:5, borderSkipped:false},
+        {label:'Expenses', data:rd.map(d=>d.exp), backgroundColor:'rgba(13,58,107,0.75)', borderRadius:5, borderSkipped:false},
+      ]
+    },
+    options:{...OPTS, scales:{
+      y:{ticks:{callback:v=>'₦'+(v/1e6).toFixed(1)+'M', font:{size:10}}, grid:{color:'#E2E8F0'}, border:{display:false}},
+      x:{ticks:{font:{size:11}}, grid:{display:false}, border:{display:false}}
+    }}
+  });
+}
+
+/* Line chart — Cumulative collection */
+if (document.getElementById('lineChart')) {
+  let running=0, cum=[];
+  rd.forEach(d=>{running+=d.rev; cum.push(running);});
+  new Chart(document.getElementById('lineChart'), {
+    type:'line',
+    data:{
+      labels:rd.map(d=>d.month),
+      datasets:[{label:'Cumulative',data:cum,borderColor:'#0D3A6B',backgroundColor:'rgba(13,58,107,0.08)',
+                 borderWidth:2.5,pointBackgroundColor:'#0D3A6B',pointRadius:4,tension:0.4,fill:true}]
+    },
+    options:{...OPTS, scales:{
+      y:{ticks:{callback:v=>'₦'+(v/1e6).toFixed(1)+'M',font:{size:10}}, grid:{color:'#E2E8F0'}, border:{display:false}},
+      x:{ticks:{font:{size:11}}, grid:{display:false}, border:{display:false}}
+    }}
+  });
+}
+
+/* Donut chart */
+if (document.getElementById('donutChart')) {
+  new Chart(document.getElementById('donutChart'), {
+    type:'doughnut',
+    data:{labels:['Paid','Pending','Overdue'],datasets:[{data:donut,backgroundColor:['#10B981','#F59E0B','#C9184A'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:false,cutout:'70%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>` ${ctx.label}: ${ctx.raw}`}}}}
+  });
+}
+
+/* Horizontal bar — Collection rate */
+if (document.getElementById('hbarChart')) {
+  new Chart(document.getElementById('hbarChart'), {
+    type:'bar',
+    data:{
+      labels:hbar.map(d=>d.name.length>18?d.name.slice(0,16)+'…':d.name),
+      datasets:[{data:hbar.map(d=>d.rate),
+                 backgroundColor:hbar.map(d=>d.rate>=80?'rgba(16,185,129,0.8)':d.rate>=50?'rgba(245,158,11,0.8)':'rgba(201,24,74,0.8)'),
+                 borderRadius:5,borderSkipped:false}]
+    },
+    options:{...OPTS, indexAxis:'y', scales:{
+      x:{min:0,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'#E2E8F0'},border:{display:false}},
+      y:{ticks:{font:{size:11}},grid:{display:false},border:{display:false}}
+    }}
+  });
+}
+
+/* Forecast chart */
+if (document.getElementById('forecastChart')) {
+  new Chart(document.getElementById('forecastChart'), {
+    type:'bar',
+    data:{
+      labels:fc.map(d=>d.label),
+      datasets:[{label:'Projected Income',data:fc.map(d=>d.amount),
+                 backgroundColor:'rgba(13,58,107,0.7)',borderRadius:5,borderSkipped:false}]
+    },
+    options:{...OPTS, scales:{
+      y:{ticks:{callback:v=>'₦'+(v/1e6).toFixed(1)+'M',font:{size:10}},grid:{color:'#E2E8F0'},border:{display:false}},
+      x:{ticks:{font:{size:10}},grid:{display:false},border:{display:false}}
+    }}
+  });
+}
+{% endif %}
+
+/* ── Tab switching ── */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.fin-tab').forEach(b => b.classList.remove('active'));
+  const pane = document.getElementById('tab-' + name);
+  if (pane) pane.classList.add('active');
+  if (btn)  btn.classList.add('active');
+  // Resize charts after showing
+  setTimeout(() => Chart.instances && Object.values(Chart.instances).forEach(c => c.resize()), 50);
+}
+
+/* ── Open tab from URL hash ── */
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = window.location.hash.replace('#','');
+  if (hash) {
+    const btn = document.querySelector(`.fin-tab[onclick*="'${hash}'"]`);
+    if (btn) switchTab(hash, btn);
+  }
+});
+
+/* ── Export dropdown ── */
+function toggleExportDrop() {
+  const d = document.getElementById('exportDrop');
+  if(d) d.style.display = d.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', e => {
+  const w = document.getElementById('exportDropWrap');
+  if (w && !w.contains(e.target)) {
+    const d = document.getElementById('exportDrop');
+    if (d) d.style.display = 'none';
+  }
+});
+
+/* ── Collapsible cards ── */
+function toggleCollapse(cardId) {
+  const card = document.getElementById(cardId);
+  const body = card.querySelector('.collapse-body');
+  const collapsed = card.classList.toggle('collapsed');
+  body.style.display = collapsed ? 'none' : '';
+}
+
+/* ── Txn status filter ── */
+function filterTxns() {
+  const val = document.getElementById('txnStatusFilter').value;
+  document.querySelectorAll('#txnTable tbody tr[data-status]').forEach(r => {
+    r.style.display = (!val || r.dataset.status === val) ? '' : 'none';
+  });
+}
+
+/* ── Expense status filter ── */
+function filterExpenses() {
+  const val = document.getElementById('expStatusFilter') && document.getElementById('expStatusFilter').value;
+  document.querySelectorAll('#expTable tbody tr[data-estatus]').forEach(r => {
+    r.style.display = (!val || r.dataset.estatus === val) ? '' : 'none';
+  });
+}
+
+/* ── Tenant payment history modal (AJAX) ── */
+async function loadHistory(tenantId, tenantName) {
+  document.getElementById('histModalTitle').textContent = tenantName + ' — Payment History';
+  document.getElementById('histModalBody').innerHTML = `<div style="text-align:center;padding:30px;color:var(--mt)"><i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>Loading…</div>`;
+  openModal('histModal');
+  try {
+    const res = await fetch(`/finance/tenant/${tenantId}/history`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    if (!data.transactions || !data.transactions.length) {
+      document.getElementById('histModalBody').innerHTML = `<div style="text-align:center;padding:30px;color:var(--mt)"><i class="bi bi-receipt" style="font-size:26px;opacity:.3;display:block;margin-bottom:8px"></i>No records.</div>`;
+      return;
+    }
+    const stats = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+      ${[['Total Paid',data.stats.total_paid],['Transactions',data.stats.count],['Last Payment',data.stats.last_payment]].map(([l,v])=>`
+      <div style="background:var(--bg);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--mt);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${l}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--tx)">${v}</div></div>`).join('')}</div>`;
+    const timeline = `<div style="font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Transaction Timeline</div>
+      <ul class="hist-timeline">${data.transactions.map(t=>`<li class="hist-item">
+        <div class="hist-dot ${t.status}"></div>
+        <div class="hist-content">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div><div style="font-size:13px;font-weight:600">${t.ref}</div><div style="font-size:12px;color:var(--mt)">${t.invoice} · ${t.method}</div></div>
+            <div style="text-align:right;flex-shrink:0;margin-left:10px"><div style="font-size:13.5px;font-weight:600">${t.amount}</div><div style="font-size:11px;color:var(--mt)">${t.date}</div></div>
+          </div>
+          <span style="display:inline-flex;align-items:center;margin-top:4px;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:600;background:${t.status==='confirmed'?'#ECFDF5':'#FFFBEB'};color:${t.status==='confirmed'?'#047857':'#B45309'}">${t.status}</span>
+        </div></li>`).join('')}</ul>`;
+    document.getElementById('histModalBody').innerHTML = stats + timeline;
+  } catch { document.getElementById('histModalBody').innerHTML = `<p style="color:var(--cr);text-align:center;padding:20px">Failed to load.</p>`; }
+}
+
+/* ── Ledger detail modal (AJAX) ── */
+async function loadLedger(tenantId, tenantName) {
+  document.getElementById('ledgerModalTitle').textContent = tenantName + ' — Detailed Ledger';
+  document.getElementById('ledgerModalBody').innerHTML = `<div style="text-align:center;padding:30px;color:var(--mt)"><i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>Loading…</div>`;
+  openModal('ledgerModal');
+  try {
+    const res = await fetch(`/finance/ledger/${tenantId}`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const balColor = data.bal_sign === '+' ? 'var(--gr)' : 'var(--cr)';
+    const header = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:14px;background:var(--bg);border-radius:10px">
+      <div><div style="font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em">Running Balance</div>
+      <div style="font-size:24px;font-weight:700;color:${balColor}">${data.bal_sign}${data.balance}</div></div>
+      <div style="font-size:12.5px;color:var(--mt)">${data.entries.length} entries</div></div>`;
+    const rows = data.entries.length ? `<div class="tw"><table class="ht">
+      <thead><tr><th>Date</th><th>Description</th><th style="color:var(--cr)">Debit</th><th style="color:var(--gr)">Credit</th><th>Balance</th></tr></thead>
+      <tbody>${data.entries.map(e=>`<tr>
+        <td style="font-size:12px;color:var(--mt)">${e.date}</td>
+        <td style="font-size:12.5px" class="entry-${e.type}">${e.description}</td>
+        <td style="font-weight:600;color:var(--cr)">${e.debit || ''}</td>
+        <td style="font-weight:600;color:var(--gr)">${e.credit || ''}</td>
+        <td style="font-weight:600;color:${e.bal_sign==='+'?'var(--gr)':'var(--cr)'}">${e.bal_sign}${e.balance_f}</td>
+      </tr>`).join('')}</tbody></table></div>` :
+      `<div style="text-align:center;padding:24px;color:var(--mt);font-size:13px">No ledger entries yet.</div>`;
+    document.getElementById('ledgerModalBody').innerHTML = header + rows;
+  } catch { document.getElementById('ledgerModalBody').innerHTML = `<p style="color:var(--cr);text-align:center;padding:20px">Failed to load ledger.</p>`; }
+}
+
+/* ── Edit Expense modal population ── */
+function openEditExpense(exp) {
+  document.getElementById('editExpenseForm').action = `/finance/expenses/${exp.id}/edit`;
+  document.getElementById('editCategory').value   = exp.category;
+  document.getElementById('editDate').value        = exp.expense_date;
+  document.getElementById('editDesc').value        = exp.description;
+  document.getElementById('editAmount').value      = exp.amount;
+  document.getElementById('editVendor').value      = exp.vendor === '—' ? '' : exp.vendor;
+  document.getElementById('editStatus').value      = exp.status;
+  document.getElementById('editPaidBy').value      = exp.paid_by === '—' ? '' : exp.paid_by;
+  document.getElementById('editNotes').value       = exp.notes;
+  openModal('editExpenseModal');
+}
+
+/* ── Expense form helpers ── */
+function togglePaidBy(status) {
+  document.getElementById('paidByWrap').style.opacity = status === 'paid' ? '1' : '0.5';
+}
+function toggleTenantPayer(val) {
+  const w = document.getElementById('tenantPayerWrap');
+  if(w) w.style.display = val === 'Tenant' ? '' : 'none';
+}
+
+/* ── Load units for expense add modal ── */
+async function loadUnitsForExpense(propertyId) {
+  const sel = document.getElementById('expUnitSel');
+  sel.innerHTML = '<option value="">All units / general</option>';
+  if (!propertyId) return;
+  try {
+    const res = await fetch(`/api/properties/${propertyId}/vacant-units`);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      data.forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id; opt.textContent = `Unit ${u.unit_number}`;
+        sel.appendChild(opt);
+      });
+    }
+  } catch {}
+}
+</script>
+{% endblock %}

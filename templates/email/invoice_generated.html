@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#F1F5F9;font-family:'Segoe UI',Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F1F5F9;padding:32px 16px">
+  <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+      <!-- Header -->
+      <tr><td style="background:#0D3A6B;border-radius:14px 14px 0 0;padding:28px 32px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:#fff;letter-spacing:-0.5px">HS Property Management</div>
+        <div style="font-size:13px;color:#93C5FD;margin-top:4px">Automated Invoice Notification</div>
+      </td></tr>
+
+      <!-- Body -->
+      <tr><td style="background:#fff;padding:32px">
+        <p style="margin:0 0 6px;font-size:15px;color:#1E293B;font-weight:600">Hello {{ tenant_name }},</p>
+        <p style="margin:0 0 24px;font-size:14px;color:#475569;line-height:1.6">
+          A new rent invoice has been generated for your tenancy at <strong>{{ property_name }}</strong>.
+          Please review the details below and ensure payment is made before the due date.
+        </p>
+
+        <!-- Invoice Card -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;border:1.5px solid #E2E8F0;border-radius:12px;margin-bottom:24px">
+          <tr><td style="padding:20px 24px;border-bottom:1px solid #E2E8F0">
+            <div style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Invoice Reference</div>
+            <div style="font-size:20px;font-weight:700;color:#0D3A6B">{{ invoice.inv_number }}</div>
+          </td></tr>
+          <tr><td style="padding:16px 24px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td width="50%" style="padding-bottom:12px">
+                  <div style="font-size:11px;color:#64748B;font-weight:600;text-transform:uppercase;letter-spacing:0.07em">Type</div>
+                  <div style="font-size:14px;color:#1E293B;font-weight:500;margin-top:3px">{{ invoice.type }}</div>
+                </td>
+                <td width="50%" style="padding-bottom:12px">
+                  <div style="font-size:11px;color:#64748B;font-weight:600;text-transform:uppercase;letter-spacing:0.07em">Amount Due</div>
+                  <div style="font-size:18px;color:#C9184A;font-weight:700;margin-top:3px">&#8358;{{ "%.2f"|format(invoice.amount) }}</div>
+                </td>
+              </tr>
+              <tr>
+                <td width="50%">
+                  <div style="font-size:11px;color:#64748B;font-weight:600;text-transform:uppercase;letter-spacing:0.07em">Due Date</div>
+                  <div style="font-size:14px;color:#1E293B;font-weight:500;margin-top:3px">{{ invoice.due_date.strftime('%B %d, %Y') }}</div>
+                </td>
+                <td width="50%">
+                  <div style="font-size:11px;color:#64748B;font-weight:600;text-transform:uppercase;letter-spacing:0.07em">Status</div>
+                  <div style="display:inline-block;margin-top:3px;padding:2px 10px;background:#FEF3C7;color:#B45309;border-radius:99px;font-size:12px;font-weight:700">Pending</div>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+
+        <!-- Warning -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;margin-bottom:24px">
+          <tr><td style="padding:14px 18px;font-size:13px;color:#9A3412">
+            <strong>&#9888; Late Payment Notice:</strong> Invoices not paid by the due date will be marked overdue and may incur additional charges.
+          </td></tr>
+        </table>
+
+        <p style="margin:0;font-size:13.5px;color:#475569;line-height:1.6">
+          To make a payment, please log in to the tenant portal or contact your property manager directly.
+        </p>
+      </td></tr>
+
+      <!-- Footer -->
+      <tr><td style="background:#F8FAFC;border-top:1px solid #E2E8F0;border-radius:0 0 14px 14px;padding:20px 32px;text-align:center">
+        <p style="margin:0;font-size:12px;color:#94A3B8">HS Property Management &mdash; This is an automated message. Please do not reply directly to this email.</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

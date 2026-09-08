@@ -1,0 +1,686 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block page_title %}Users{% endblock %}
+
+{% block topbar_actions %}
+<div class="topbar-actions-wrap">
+  <form method="get" action="{{ url_for('tenants') }}" class="search-box">
+    <i class="bi bi-search"></i>
+    <input type="text" name="q" value="{{ q }}" placeholder="Search name, email or property…"/>
+    {% if q %}<a href="{{ url_for('tenants') }}" class="srch-clear"><i class="bi bi-x"></i></a>{% endif %}
+  </form>
+  {% if role == 'Admin' and (has_perm('manage_staff') or has_perm('onboard_users')) %}
+  <button class="btn-cr" onclick="openModal('addTenantModal')">
+    <i class="bi bi-person-plus"></i> <span class="hide-mobile">Add User</span>
+  </button>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── General CRM Layout ── */
+  .topbar-actions-wrap { display: flex; align-items: center; gap: 12px; width: 100%; justify-content: flex-end; }
+  .search-box { position: relative; display: flex; align-items: center; max-width: 350px; width: 100%; }
+  .search-box input { width: 100%; border-radius: 20px; padding: 8px 35px; border: 1px solid var(--bd); background: var(--wh); font-size: 13.5px; transition: 0.2s; }
+  .search-box input:focus { outline: none; border-color: var(--nv); box-shadow: 0 0 0 3px rgba(13,58,107,0.1); }
+  .search-box i.bi-search { position: absolute; left: 12px; color: var(--mt); font-size: 14px; }
+  .srch-clear { position: absolute; right: 12px; color: var(--mt); font-size: 16px; text-decoration: none; }
+
+  /* ── CRM Tabs Navigation ── */
+  .crm-tabs {
+    display: flex; gap: 24px; border-bottom: 1px solid var(--bd); margin-bottom: 24px; padding: 0 4px;
+  }
+  .crm-tab {
+    padding: 12px 4px; font-size: 14px; font-weight: 600; color: var(--mt); text-decoration: none;
+    border-bottom: 2px solid transparent; transition: all 0.2s; display: flex; align-items: center; gap: 8px;
+  }
+  .crm-tab:hover { color: var(--nv); }
+  .crm-tab.active { color: var(--nv); border-bottom-color: var(--nv); }
+  .crm-tab-badge { background: rgba(13,58,107,0.08); color: var(--nv); padding: 2px 8px; border-radius: 12px; font-size: 11px; }
+
+  /* ── Stats Row ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--wh); border: 1px solid var(--bd); border-radius: 12px; padding: 18px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,0.02); transition: 0.2s; }
+  .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+
+  /* ── Modern Table ── */
+  .crm-card { background: var(--wh); border: 1px solid var(--bd); border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.02); overflow: visible; }
+  .ht th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mt); padding: 16px; border-bottom: 1px solid var(--bd); font-weight: 700; }
+  .ht td { padding: 16px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+  .ht tr:last-child td { border-bottom: none; }
+  .ht tr:hover td { background-color: #f8fafc; }
+  tr.row-inactive td { opacity: 0.6; background-color: #fcfcfc; }
+
+  /* Avatars & Pills */
+  .tenant-avatar { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; color: #fff; }
+  .role-pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+
+  /* ── CRM Action Dropdown ── */
+  .act-menu-wrap { position: relative; display: inline-block; }
+  .btn-dots { background: transparent; border: 1px solid transparent; color: var(--mt); width: 32px; height: 32px; border-radius: 6px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+  .btn-dots:hover, .btn-dots.active { background: #f1f5f9; color: var(--nv); border-color: var(--bd); }
+  
+  .crm-dropdown { position: absolute; right: 0; top: calc(100% + 4px); background: var(--wh); border: 1px solid var(--bd); border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 180px; z-index: 100; opacity: 0; visibility: hidden; transform: translateY(-10px); transition: all 0.2s; padding: 6px 0; }
+  .crm-dropdown.show { opacity: 1; visibility: visible; transform: translateY(0); }
+  
+  .dd-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 16px; background: none; border: none; font-size: 13px; color: var(--tx); cursor: pointer; text-decoration: none; transition: 0.15s; }
+  .dd-item:hover { background: #f8fafc; color: var(--nv); }
+  .dd-item i { font-size: 15px; color: var(--mt); }
+  .dd-item:hover i { color: inherit; }
+  .dd-item.text-danger { color: var(--cr); }
+  .dd-item.text-danger i { color: var(--cr); }
+  .dd-divider { height: 1px; background: var(--bd); margin: 4px 0; }
+
+  /* Utilities */
+  .fw6 { font-weight: 600; }
+  .text-sub { color: var(--mt); font-size: 12px; margin-top: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if role == 'Landlord' %}
+<div class="view-only-banner" style="margin-bottom: 24px;">
+  <i class="bi bi-shield-lock" style="font-size:18px;flex-shrink:0"></i>
+  <span>You are in <strong>read-only mode</strong>. Contact a system administrator to modify tenant records.</span>
+</div>
+{% endif %}
+
+<div class="crm-tabs">
+  <a href="{{ url_for('tenants', q=q, filter='Tenant') }}" class="crm-tab {% if filter_role == 'Tenant' %}active{% endif %}">
+    <i class="bi bi-house-user"></i> Tenants
+    {% if filter_role == 'Tenant' %}<span class="crm-tab-badge">{{ tenants|length }}</span>{% endif %}
+  </a>
+  <a href="{{ url_for('tenants', q=q, filter='Landlord') }}" class="crm-tab {% if filter_role == 'Landlord' %}active{% endif %}">
+    <i class="bi bi-buildings"></i> Landlords
+  </a>
+  <a href="{{ url_for('tenants', q=q, filter='Admin') }}" class="crm-tab {% if filter_role == 'Admin' %}active{% endif %}">
+    <i class="bi bi-shield-check"></i> Administrators
+  </a>
+</div>
+
+<div class="crm-card" style="padding-bottom: 60px;"> <div class="card-hdr" style="border-bottom: 1px solid var(--bd); padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+    <span class="card-title fw6" style="font-size: 16px;">
+      {% if q %}Search results for "{{ q }}"{% else %}Directory Overview{% endif %}
+    </span>
+    <button class="btn-ghost sm" onclick="exportCSV()"><i class="bi bi-download"></i> Export CSV</button>
+  </div>
+
+  <div class="tw" style="overflow: visible;"> <table class="ht" id="tenantTable" style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th>User Info</th>
+          <th>Contact Details</th>
+          {% if filter_role in ['', 'Tenant'] %}
+            <th>Lease Details</th>
+            <th>Financial Status</th>
+          {% else %}
+            <th>Role</th>
+          {% endif %}
+          <th>Account Status</th>
+          {% if role == 'Admin' %}<th style="text-align: right;">Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tenants %}
+        <tr class="{% if not t.is_active %}row-inactive{% endif %}" data-id="{{ t.id }}">
+          
+          <td>
+            <div class="df aic g8" style="min-width:0">
+              <div class="tenant-avatar av-{{ ['nv','gr','cr','wn'][loop.index0 % 4] }}">
+                {{ t.name[0] | upper }}
+              </div>
+              <div style="min-width:0">
+                <a href="{{ url_for('user_profile', user_id=t.id) }}" class="fw6" style="font-size:14px;color:var(--nv);text-decoration:none">{{ t.name }}</a>
+                <div class="text-sub">{{ t.email }}</div>
+                {% if filter_role == '' %}
+                  <div style="margin-top: 6px;"><span class="role-pill rp-{{ t.role | lower }}">{{ t.role }}</span></div>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+
+          <td>
+            <div class="fw6" style="font-size:13px;">{{ t.phone or 'Not provided' }}</div>
+            <a href="mailto:{{ t.email }}" class="text-sub" style="display:inline-block; text-decoration:none;"><i class="bi bi-envelope"></i> Send Email</a>
+          </td>
+
+          {% if filter_role in ['', 'Tenant'] %}
+            <td>
+              {% if t.role == 'Tenant' %}
+                {% if t.property_name != '—' %}
+                  <div class="fw6" style="font-size:13px;color:var(--nv);">{{ t.property_name }}</div>
+                  <div class="text-sub">Unit {{ t.unit_number }}</div>
+                {% else %}
+                  <span class="text-sub" style="font-style: italic;">Unassigned</span>
+                {% endif %}
+              {% else %}
+                <span class="text-sub">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if t.role == 'Tenant' %}
+                <div class="fw6" style="font-size:14px;">{{ fmt(t.monthly_rent) if t.monthly_rent else '—' }}</div>
+                {% if t.invoice_status != '—' %}
+                  <span class="badge b-{{ t.invoice_status }}" style="margin-top:4px;">{{ t.invoice_status|title }}</span>
+                {% endif %}
+              {% else %}
+                <span class="text-sub">—</span>
+              {% endif %}
+            </td>
+          {% else %}
+            <td>
+              <span class="role-pill rp-{{ t.role | lower }}">{{ t.role }}</span>
+              {% if t.role == 'Admin' %}
+                <div class="text-sub" style="margin-top:4px">
+                  <i class="bi bi-diagram-3"></i> {{ t.department or 'Management' }}
+                </div>
+              {% endif %}
+            </td>
+          {% endif %}
+
+          <td>
+            {% if t.is_active %}
+              <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#047857; font-weight:600;"><i class="bi bi-circle-fill" style="font-size:8px;"></i> Active</span>
+            {% else %}
+              <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#9ca3af; font-weight:600;"><i class="bi bi-circle-fill" style="font-size:8px;"></i> Suspended</span>
+            {% endif %}
+          </td>
+
+          {% if role == 'Admin' %}
+          <td style="text-align: right;">
+            <div class="act-menu-wrap">
+              <button class="btn-dots" onclick="toggleDropdown(event, 'dd-{{ t.id }}')">
+                <i class="bi bi-three-dots"></i>
+              </button>
+              
+              <div class="crm-dropdown" id="dd-{{ t.id }}">
+                <a href="{{ url_for('user_profile', user_id=t.id) }}" class="dd-item">
+                  <i class="bi bi-person-lines-fill"></i> View Profile
+                </a>
+                {% if (has_perm('manage_staff') or (has_perm('edit_contacts') and t.role != 'Admin')) %}
+                <button class="dd-item" data-tenant="{{ t | tojson | forceescape }}" onclick="openEditModal(this)">
+                  <i class="bi bi-pencil-square"></i> Edit Profile
+                </button>
+                {% endif %}
+
+                {% if t.role == 'Tenant' %}
+                  {% if has_perm('view_tenant_full') %}
+                  <a href="{{ url_for('documents', tenant_id=t.id) }}" class="dd-item">
+                    <i class="bi bi-folder2-open"></i> Documents
+                  </a>
+                  {% endif %}
+                  {% if has_perm('view_finance_full') %}
+                  <button class="dd-item" onclick='loadHistory({{ t.id }}, {{ t.name | tojson }})'>
+                    <i class="bi bi-receipt"></i> Payment History
+                  </button>
+                  {% endif %}
+
+                  {% if t.invoice_status == 'overdue' and has_perm('log_complaints') %}
+                    <form method="POST" action="{{ url_for('nudge_tenant', user_id=t.id) }}" style="margin:0;">
+                      <button type="submit" class="dd-item"><i class="bi bi-bell"></i> Send Reminder</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+
+                {% if has_perm('manage_staff') %}
+                <div class="dd-divider"></div>
+
+                {% if t.is_active %}
+                  <form method="POST" action="{{ url_for('deactivate_tenant', user_id=t.id) }}" style="margin:0;" onsubmit="return confirm('Suspend {{ t.name }}?');">
+                    <button type="submit" class="dd-item"><i class="bi bi-person-slash"></i> Suspend Account</button>
+                  </form>
+                {% else %}
+                  <form method="POST" action="{{ url_for('activate_tenant', user_id=t.id) }}" style="margin:0;">
+                    <button type="submit" class="dd-item"><i class="bi bi-person-check"></i> Reactivate Account</button>
+                  </form>
+                {% endif %}
+
+                <form method="POST" action="{{ url_for('delete_tenant', user_id=t.id) }}" style="margin:0;" onsubmit="return confirm('Permanently delete {{ t.name }}? This cannot be undone.');">
+                  <button type="submit" class="dd-item text-danger"><i class="bi bi-trash3"></i> Delete User</button>
+                </form>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" style="text-align:center;padding:60px;color:var(--mt)">
+            <i class="bi bi-inboxes" style="font-size:36px;opacity:.3;display:block;margin-bottom:14px"></i>
+            <div style="font-size:15px; font-weight:600; color:var(--tx);">No records found</div>
+            <div style="font-size:13px; margin-top:4px;">{% if q %}Try adjusting your search criteria.{% else %}Click "Add Tenant" to get started.{% endif %}</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+{# ═══════════════════════════════════════════════════════════════
+   ADMIN-ONLY MODALS
+══════════════════════════════════════════════════════════════ #}
+{% if role == 'Admin' %}
+
+<!-- ── Add User Modal ── -->
+<div class="modal-ov" id="addTenantModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-title">Add New User</span>
+      <button class="modal-close" onclick="closeModal('addTenantModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+      <form method="POST" action="{{ url_for('add_tenant') }}" id="addTenantForm">
+
+        <div class="modal-section">Account Details</div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">First Name</label>
+            <input class="form-ctrl" name="first_name" placeholder="First" required/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Last Name</label>
+            <input class="form-ctrl" name="last_name" placeholder="Last" required/>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Email Address</label>
+          <input class="form-ctrl" type="email" name="email" placeholder="user@example.com" required/>
+        </div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Phone</label>
+            <input class="form-ctrl" name="phone" placeholder="+234 800 000 0000"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Role</label>
+            <select class="form-sel" name="role" id="addRoleSelect" onchange="toggleTenancySection(this.value,'add')">
+              <option value="Tenant">Tenant</option>
+              <option value="Landlord">Landlord</option>
+              {% if has_perm('manage_staff') %}<option value="Admin">Admin</option>{% endif %}
+            </select>
+          </div>
+        </div>
+        {% if has_perm('manage_staff') %}
+        <div class="fg" id="addDeptSection" style="display:none">
+          <label class="form-label">Department (staff accounts)</label>
+          <select class="form-sel" name="department">
+            {% for d in DEPARTMENTS %}
+            <option value="{{ d }}">{{ d }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Password</label>
+            <input class="form-ctrl" type="password" name="password" placeholder="Min 6 characters" required minlength="6"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Confirm Password</label>
+            <input class="form-ctrl" type="password" name="confirm_password" placeholder="Repeat password" required/>
+          </div>
+        </div>
+
+        <!-- Tenancy section — shown only for Tenant role -->
+        <div id="addTenancySection">
+          <div class="modal-section">Tenancy Details <span style="font-weight:400;text-transform:none;font-size:10px">(optional)</span></div>
+          <div class="fg">
+            <label class="form-label">Property</label>
+            <select class="form-sel" name="property_id" id="addPropertySelect" onchange="loadUnits(this.value,'addUnitSelect')">
+              <option value="">— Select property —</option>
+              {% for p in properties %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fg2">
+            <div class="fg">
+              <label class="form-label">Unit</label>
+              <select class="form-sel" name="unit_id" id="addUnitSelect">
+                <option value="">— Select property first —</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="form-label">Monthly Rent (₦)</label>
+              <input class="form-ctrl" type="number" name="monthly_rent" placeholder="0" min="0"/>
+            </div>
+          </div>
+          <div class="fg2">
+            <div class="fg">
+              <label class="form-label">Move-in Date</label>
+              <input class="form-ctrl" type="date" name="start_date"/>
+            </div>
+            <div class="fg">
+              <label class="form-label">Lease End Date</label>
+              <input class="form-ctrl" type="date" name="end_date"/>
+            </div>
+          </div>
+        </div>
+
+        <div class="df g8" style="margin-top:24px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                  onclick="closeModal('addTenantModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+            <i class="bi bi-person-plus"></i> Create User
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Edit User Modal ── -->
+<div class="modal-ov" id="editTenantModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-title" id="editModalTitle">Edit User</span>
+      <button class="modal-close" onclick="closeModal('editTenantModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+      <form method="POST" id="editTenantForm">
+
+        <div class="modal-section">Account Details</div>
+        <div class="fg">
+          <label class="form-label">Full Name</label>
+          <input class="form-ctrl" name="name" id="editName" required/>
+        </div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Email</label>
+            <input class="form-ctrl" type="email" name="email" id="editEmail" required/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Phone</label>
+            <input class="form-ctrl" name="phone" id="editPhone"/>
+          </div>
+        </div>
+        {% if has_perm('manage_staff') %}
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Role</label>
+            <select class="form-sel" name="role" id="editRole" onchange="toggleTenancySection(this.value,'edit')">
+              <option value="Tenant">Tenant</option>
+              <option value="Landlord">Landlord</option>
+              <option value="Admin">Admin</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">New Password <span style="font-weight:400;font-size:10px">(leave blank to keep)</span></label>
+            <input class="form-ctrl" type="password" name="password" placeholder="New password…" minlength="6"/>
+          </div>
+        </div>
+        <div class="fg" id="editDeptSection" style="display:none">
+          <label class="form-label">Department (staff accounts)</label>
+          <select class="form-sel" name="department" id="editDepartment">
+            {% for d in DEPARTMENTS %}
+            <option value="{{ d }}">{{ d }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+
+        <!-- Tenancy section for edit — Management only (sets rent/unit) -->
+        {% if has_perm('manage_staff') %}
+        <div id="editTenancySection">
+          <div class="modal-section">Tenancy Details</div>
+          <div class="fg">
+            <label class="form-label">Property</label>
+            <select class="form-sel" name="property_id" id="editPropertySelect" onchange="loadUnits(this.value,'editUnitSelect')">
+              <option value="">— No assignment —</option>
+              {% for p in properties %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fg2">
+            <div class="fg">
+              <label class="form-label">Unit</label>
+              <select class="form-sel" name="unit_id" id="editUnitSelect">
+                <option value="">— Select property first —</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="form-label">Monthly Rent (₦)</label>
+              <input class="form-ctrl" type="number" name="monthly_rent" id="editRent" placeholder="0" min="0"/>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="df g8" style="margin-top:24px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                  onclick="closeModal('editTenantModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+            <i class="bi bi-check2"></i> Save Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<div class="modal-ov" id="histModal">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hdr">
+      <span class="modal-title" id="histModalTitle">Payment History</span>
+      <button class="modal-close" onclick="closeModal('histModal')">&times;</button>
+    </div>
+    <div class="modal-body" id="histModalBody">
+      <div style="text-align:center;padding:30px;color:var(--mt)">
+        <i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>
+        Loading…
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}{# end Admin-only modals #}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ── Tenant payment history modal (AJAX) ─────────────────────────────
+async function loadHistory(tenantId, tenantName) {
+  document.getElementById('histModalTitle').textContent = tenantName + ' — Payment History';
+  document.getElementById('histModalBody').innerHTML = `
+    <div style="text-align:center;padding:30px;color:var(--mt)">
+      <i class="bi bi-hourglass-split" style="font-size:24px;opacity:.4;display:block;margin-bottom:8px"></i>Loading…
+    </div>`;
+  openModal('histModal');
+
+  try {
+    const res = await fetch(`/finance/tenant/${tenantId}/history`);
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+
+    if (!data.transactions || !data.transactions.length) {
+      document.getElementById('histModalBody').innerHTML = `
+        <div style="text-align:center;padding:30px;color:var(--mt)">
+          <i class="bi bi-receipt" style="font-size:26px;opacity:.3;display:block;margin-bottom:8px"></i>
+          No payment records found for this tenant.
+        </div>`;
+      return;
+    }
+
+    /* Stats row */
+    const statsHtml = `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+        ${[['Total Paid', data.stats.total_paid], ['Transactions', data.stats.count], ['Last Payment', data.stats.last_payment]].map(([l,v]) => `
+          <div style="background:var(--bg);border-radius:10px;padding:12px;text-align:center">
+            <div style="font-size:11px;color:var(--mt);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${l}</div>
+            <div style="font-size:14px;font-weight:600;color:var(--tx)">${v}</div>
+          </div>`).join('')}
+      </div>`;
+
+    /* Timeline */
+    const timelineHtml = `
+      <div style="font-size:11px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Transaction Timeline</div>
+      <ul class="hist-timeline">
+        ${data.transactions.map(t => `
+          <li class="hist-item">
+            <div class="hist-dot ${t.status}"></div>
+            <div class="hist-content">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                <div>
+                  <div style="font-size:13px;font-weight:600;color:var(--tx)">${t.ref}</div>
+                  <div style="font-size:12px;color:var(--mt)">${t.invoice} · ${t.method}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;margin-left:10px">
+                  <div style="font-size:13.5px;font-weight:600;color:var(--tx)">${t.amount}</div>
+                  <div style="font-size:11px;color:var(--mt)">${t.date}</div>
+                </div>
+              </div>
+              <span style="display:inline-flex;align-items:center;margin-top:4px;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:600;background:${t.status==='confirmed'?'#ECFDF5':'#FFFBEB'};color:${t.status==='confirmed'?'#047857':'#B45309'}">${t.status}</span>
+            </div>
+          </li>`).join('')}
+      </ul>`;
+
+    document.getElementById('histModalBody').innerHTML = statsHtml + timelineHtml;
+  } catch(e) {
+    document.getElementById('histModalBody').innerHTML = `<p style="color:var(--cr);text-align:center;padding:20px">Failed to load history.</p>`;
+  }
+}
+// ── Unit loader (AJAX) ──────────────────────────────────────────────
+async function loadUnits(propId, targetSelectId) {
+  const sel = document.getElementById(targetSelectId);
+  if (!sel) return;
+
+  if (!propId) {
+    sel.innerHTML = '<option value="">— Select property first —</option>';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">Loading…</option>';
+
+  try {
+    const res = await fetch(`/api/properties/${propId}/vacant-units`, {
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    const units = Array.isArray(data) ? data : (data.units || []);
+
+    sel.innerHTML = '<option value="">— Select unit —</option>';
+
+    if (!units.length) {
+      sel.innerHTML = '<option value="">No vacant units available</option>';
+      return;
+    }
+
+    units.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = `Unit ${u.unit_number} (₦${Number(u.rent_amount || 0).toLocaleString()})`;
+      sel.appendChild(opt);
+    });
+  } catch (err) {
+    console.error(err);
+    sel.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+async function openEditModal(buttonElement) {
+  const t = JSON.parse(buttonElement.dataset.tenant);
+  document.getElementById('editModalTitle').textContent = 'Edit — ' + t.name;
+  document.getElementById('editName').value = t.name || '';
+  document.getElementById('editEmail').value = t.email || '';
+  document.getElementById('editPhone').value = t.phone || '';
+  document.getElementById('editTenantForm').action = `/tenants/${t.id}/edit`;
+
+  // Role / department / tenancy fields only exist for Management staff
+  const roleEl = document.getElementById('editRole');
+  if (roleEl) roleEl.value = t.role || 'Tenant';
+  const deptEl = document.getElementById('editDepartment');
+  if (deptEl && t.department) deptEl.value = t.department;
+  const rentEl = document.getElementById('editRent');
+  if (rentEl) rentEl.value = t.monthly_rent || '';
+
+  toggleTenancySection(t.role, 'edit');
+
+  const propSel = document.getElementById('editPropertySelect');
+  const unitSel = document.getElementById('editUnitSelect');
+
+  if (propSel && unitSel) {
+    if (t.property_id) {
+      propSel.value = t.property_id;
+      await loadUnits(t.property_id, 'editUnitSelect');
+      if (t.unit_id) unitSel.value = t.unit_id;
+    } else {
+      unitSel.innerHTML = '<option value="">— Select property first —</option>';
+    }
+  }
+
+  openModal('editTenantModal');
+}
+
+// ── Show/hide tenancy section based on role ─────────────────────────
+function toggleTenancySection(role, prefix) {
+  const section = document.getElementById(prefix + 'TenancySection');
+  if (section) {
+    section.style.display = role === 'Tenant' ? '' : 'none';
+  }
+  const deptSection = document.getElementById(prefix + 'DeptSection');
+  if (deptSection) {
+    deptSection.style.display = role === 'Admin' ? '' : 'none';
+  }
+}
+
+// ── Populate and open the Edit modal ───────────────────────────────
+
+// ── CSV export ──────────────────────────────────────────────────────
+function exportCSV() {
+  const table = document.getElementById('tenantTable');
+  const rows  = [...table.querySelectorAll('tr')];
+  const csv   = rows.map(row =>
+    [...row.querySelectorAll('th, td')]
+      .map(cell => `"${cell.innerText.replace(/"/g, '""').trim()}"`)
+      .join(',')
+  ).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `hs_tenants_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── On load: hide tenancy section if role isn't Tenant ──────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const addRole = document.getElementById('addRoleSelect');
+  if (addRole) toggleTenancySection(addRole.value, 'add');
+  const editRole = document.getElementById('editRole');
+  if (editRole) toggleTenancySection(editRole.value, 'edit');
+});
+// ── Dropdown Controller ──
+function toggleDropdown(event, dropdownId) {
+  event.stopPropagation(); // Prevent closing immediately
+  
+  // Close any currently open dropdowns
+  document.querySelectorAll('.crm-dropdown').forEach(dd => {
+    if (dd.id !== dropdownId) {
+      dd.classList.remove('show');
+      dd.previousElementSibling.classList.remove('active');
+    }
+  });
+
+  // Toggle the clicked one
+  const dropdown = document.getElementById(dropdownId);
+  const button = event.currentTarget;
+  dropdown.classList.toggle('show');
+  button.classList.toggle('active');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.act-menu-wrap')) {
+    document.querySelectorAll('.crm-dropdown').forEach(dd => dd.classList.remove('show'));
+    document.querySelectorAll('.btn-dots').forEach(btn => btn.classList.remove('active'));
+  }
+});
+</script>
+{% endblock %}

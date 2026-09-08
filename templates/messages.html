@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Messages{% endblock %}
+{% block page_title %}Messages{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn-cr sm" onclick="openModal('composeModal')">
+  <i class="bi bi-pencil-square"></i> Compose
+</button>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .msg-layout { display:grid; grid-template-columns:260px 1fr; gap:20px; align-items:start; }
+  @media(max-width:700px){ .msg-layout{grid-template-columns:1fr} .msg-sidebar{display:none} }
+
+  .msg-sidebar { background:var(--cd); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+  .msg-sb-item { display:flex; align-items:center; gap:10px; padding:12px 16px; cursor:pointer; font-size:13px;
+                 font-weight:500; color:var(--tx); border-left:3px solid transparent; transition:all .15s; }
+  .msg-sb-item:hover { background:var(--bg); }
+  .msg-sb-item.active { background:var(--cr-l); color:var(--cr); border-left-color:var(--cr); font-weight:600; }
+  .msg-sb-item i { font-size:15px; }
+  .msg-sb-badge { margin-left:auto; background:var(--cr); color:#fff; font-size:10px;
+                  font-weight:700; padding:1px 7px; border-radius:99px; }
+
+  .msg-list { background:var(--cd); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+  .msg-row { display:flex; align-items:center; gap:12px; padding:14px 18px;
+             border-bottom:1px solid var(--bd); cursor:pointer; transition:background .12s; }
+  .msg-row:last-child { border-bottom:none; }
+  .msg-row:hover { background:var(--bg); }
+  .msg-row.unread { background:var(--cr-l); }
+  .msg-row.unread .msg-subject { font-weight:700; }
+  .msg-av { width:38px; height:38px; border-radius:50%; background:var(--nv); color:#fff;
+            display:flex; align-items:center; justify-content:center; font-size:14px;
+            font-weight:700; flex-shrink:0; }
+  .msg-av.gr { background:var(--gr); }
+  .msg-av.wn { background:var(--wn); }
+  .msg-meta { flex:1; min-width:0; }
+  .msg-from { font-size:13px; font-weight:600; color:var(--tx); }
+  .msg-subject { font-size:12.5px; color:var(--mt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .msg-time { font-size:11px; color:var(--mt); flex-shrink:0; }
+  .msg-unread-dot { width:8px; height:8px; border-radius:50%; background:var(--cr); flex-shrink:0; }
+
+  .msg-empty { text-align:center; padding:60px 20px; color:var(--mt); }
+  .msg-empty i { font-size:40px; opacity:.3; display:block; margin-bottom:12px; }
+
+  .compose-body textarea { resize:vertical; min-height:120px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="msg-layout">
+
+  <!-- Sidebar -->
+  <div class="msg-sidebar">
+    <a href="{{ url_for('messages', tab='inbox') }}"
+       class="msg-sb-item {% if tab == 'inbox' %}active{% endif %}">
+      <i class="bi bi-inbox"></i> Inbox
+      {% if unread_msg_count > 0 %}
+      <span class="msg-sb-badge">{{ unread_msg_count }}</span>
+      {% endif %}
+    </a>
+    <a href="{{ url_for('messages', tab='sent') }}"
+       class="msg-sb-item {% if tab == 'sent' %}active{% endif %}">
+      <i class="bi bi-send"></i> Sent
+    </a>
+    <div style="padding:14px 16px">
+      <button class="btn-cr" style="width:100%;justify-content:center" onclick="openModal('composeModal')">
+        <i class="bi bi-pencil-square"></i> Compose
+      </button>
+    </div>
+  </div>
+
+  <!-- Message List -->
+  <div>
+    {% if tab == 'inbox' %}
+    <div style="font-size:13px;color:var(--mt);font-weight:600;margin-bottom:10px;padding-left:2px">INBOX</div>
+    {% else %}
+    <div style="font-size:13px;color:var(--mt);font-weight:600;margin-bottom:10px;padding-left:2px">SENT</div>
+    {% endif %}
+
+    <div class="msg-list">
+      {% if items %}
+        {% for m in items %}
+        {% if tab == 'inbox' %}
+          {% set other = m.sender %}
+          {% set is_unread = m.read_at is none %}
+        {% else %}
+          {% set other = m.recipient %}
+          {% set is_unread = false %}
+        {% endif %}
+        {% set colors = ['nv','gr','wn','cr'] %}
+        {% set col = colors[loop.index0 % 4] %}
+        <a href="{{ url_for('message_view', msg_id=m.id) }}"
+           class="msg-row {% if is_unread %}unread{% endif %}"
+           style="text-decoration:none;color:inherit">
+          <div class="msg-av {{ col }}">{{ other.name[0].upper() }}</div>
+          <div class="msg-meta">
+            <div class="msg-from">{{ other.name }}
+              <span style="font-size:11px;font-weight:400;color:var(--mt)">
+                ({% if other.role == 'Admin' %}{{ other.department or 'Management' }} Dept{% else %}{{ other.role }}{% endif %})
+              </span>
+            </div>
+            <div class="msg-subject">{{ m.subject }}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+            <span class="msg-time">{{ m.created_at.strftime('%b %d') }}</span>
+            {% if is_unread %}<div class="msg-unread-dot"></div>{% endif %}
+          </div>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="msg-empty">
+          <i class="bi bi-{% if tab == 'inbox' %}inbox{% else %}send{% endif %}"></i>
+          {% if tab == 'inbox' %}No messages in your inbox.{% else %}No sent messages.{% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Compose Modal -->
+<div class="modal-ov" id="composeModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-title">New Message</span>
+      <button class="modal-close" onclick="closeModal('composeModal')">&times;</button>
+    </div>
+    <div class="modal-body compose-body">
+      <form method="POST" action="{{ url_for('messages_send') }}">
+        <div class="fg">
+          <label class="form-label">To</label>
+          <select class="form-sel" name="recipient_id" required>
+            <option value="">— Select recipient —</option>
+            {% if role in ['Tenant', 'Landlord'] %}
+              {% for u in recipients %}
+              <option value="{{ u.id }}">{{ u.name }} — {{ u.department or 'Management' }} Dept</option>
+              {% endfor %}
+            {% else %}
+              {% set staff = recipients | selectattr('role', 'equalto', 'Admin') | list %}
+              {% set landlords = recipients | selectattr('role', 'equalto', 'Landlord') | list %}
+              {% set tenant_users = recipients | selectattr('role', 'equalto', 'Tenant') | list %}
+              {% if staff %}
+              <optgroup label="Staff">
+                {% for u in staff %}
+                <option value="{{ u.id }}">{{ u.name }} — {{ u.department or 'Management' }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+              {% if landlords %}
+              <optgroup label="Landlords">
+                {% for u in landlords %}
+                <option value="{{ u.id }}">{{ u.name }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+              {% if tenant_users %}
+              <optgroup label="Tenants">
+                {% for u in tenant_users %}
+                <option value="{{ u.id }}">{{ u.name }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+            {% endif %}
+          </select>
+        </div>
+        <div class="fg">
+          <label class="form-label">Subject</label>
+          <input class="form-ctrl" name="subject" placeholder="Subject" required maxlength="200"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Message</label>
+          <textarea class="form-ctrl" name="body" placeholder="Write your message here…" required></textarea>
+        </div>
+        <div class="df g8" style="margin-top:20px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                  onclick="closeModal('composeModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+            <i class="bi bi-send"></i> Send
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

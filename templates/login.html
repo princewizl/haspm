@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Sign In | Hearts &amp; Sleeves Property Management</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/hs-mark.png') }}"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    :root{
+      /* Brand palette lifted from the Hearts & Sleeves master artwork */
+      --navy:#00273d;
+      --blue:#004e7a;
+      --crimson:#cd0e47;
+      --crimson-d:#a80b3a;
+      --amber:#ffbd59;
+      --wh:#fff;
+      --tx:#0F172A;
+      --mt:#64748B;
+      --bd:#E2E8F0;
+    }
+
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html,body{min-height:100vh;}
+    body{
+      font-family:'Aptos','Aptos Display',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+      background:var(--wh);
+      color:var(--tx);
+      -webkit-font-smoothing:antialiased;
+    }
+    a{text-decoration:none;}
+
+    /* ─ Layout: navy statement / photograph / sign-in, as in the artwork ─ */
+    .root{
+      display:grid;
+      grid-template-columns:30.2fr 28.5fr 41.3fr;
+      min-height:100vh;
+    }
+
+    /* ─ Panel 1 · navy statement ─ */
+    .panel{
+      background:var(--navy);
+      color:#fff;
+      padding:58px 46px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      position:relative;
+      overflow:hidden;
+    }
+    .panel::after{
+      content:"";
+      position:absolute;
+      width:520px;height:520px;
+      right:-260px;bottom:-220px;
+      background:radial-gradient(circle,rgba(0,78,122,.55) 0%,rgba(0,39,61,0) 70%);
+      pointer-events:none;
+    }
+    .panel-top,.panel-bottom{position:relative;z-index:1;}
+    .headline{
+      font-size:clamp(34px,3.1vw,46px);
+      line-height:1.12;
+      font-weight:600;
+      letter-spacing:-.02em;
+    }
+    .rule{
+      width:56px;height:4px;border-radius:99px;
+      background:var(--amber);
+      margin:26px 0 20px;
+    }
+    .sub{
+      font-size:15px;
+      line-height:1.6;
+      color:rgba(255,255,255,.72);
+      max-width:34ch;
+    }
+    .points{list-style:none;display:flex;flex-direction:column;gap:13px;}
+    .points li{
+      display:flex;align-items:center;gap:11px;
+      font-size:13.5px;color:rgba(255,255,255,.8);
+    }
+    .points i{color:var(--amber);font-size:15px;}
+    .panel-note{
+      margin-top:30px;
+      font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+      color:rgba(255,255,255,.38);
+    }
+
+    /* ─ Panel 2 · photograph ─ */
+    .shot{
+      background:#dce6ee url("{{ url_for('static', filename='img/login-hero.jpg') }}") 60% center/cover no-repeat;
+      position:relative;
+    }
+    .shot::after{
+      content:"";position:absolute;inset:0;
+      background:linear-gradient(90deg,rgba(0,39,61,.22) 0%,rgba(0,39,61,0) 45%);
+    }
+
+    /* ─ Panel 3 · sign-in ─ */
+    .signin{
+      background:var(--wh);
+      display:flex;flex-direction:column;
+      padding:44px 6.4vw 40px;
+    }
+    .brand{margin-bottom:auto;}
+    .brand img{width:78%;min-width:230px;max-width:360px;height:auto;display:block;}
+    .form-wrap{width:100%;max-width:400px;margin:36px 0 auto;}
+
+    .eyebrow{
+      font-size:11.5px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;
+      color:var(--crimson);margin-bottom:10px;
+    }
+    .form-wrap h1{
+      font-size:30px;font-weight:600;letter-spacing:-.02em;color:var(--navy);
+      margin-bottom:8px;
+    }
+    .lede{font-size:14.5px;color:var(--mt);margin-bottom:30px;}
+
+    .fg{margin-bottom:19px;}
+    .fl{
+      display:block;font-size:12.5px;font-weight:600;letter-spacing:.02em;
+      color:var(--navy);margin-bottom:7px;
+    }
+    .fw{position:relative;}
+    .fi{
+      position:absolute;left:14px;top:50%;transform:translateY(-50%);
+      color:#94A3B8;font-size:15px;pointer-events:none;transition:color .2s;
+    }
+    .ff{
+      width:100%;
+      background:#F8FAFC;
+      border:1.5px solid var(--bd);
+      border-radius:10px;
+      padding:13px 44px;
+      font-family:inherit;font-size:14.5px;color:var(--tx);
+      outline:none;
+      transition:border-color .2s,box-shadow .2s,background .2s;
+    }
+    .ff::placeholder{color:#9CA3AF;}
+    .ff:focus{
+      background:var(--wh);
+      border-color:var(--crimson);
+      box-shadow:0 0 0 3px rgba(205,14,71,.10);
+    }
+    .fw:focus-within .fi{color:var(--crimson);}
+    .ptog{
+      position:absolute;right:10px;top:50%;transform:translateY(-50%);
+      background:none;border:none;color:#94A3B8;cursor:pointer;font-size:15px;
+      padding:6px;border-radius:6px;line-height:1;
+    }
+    .ptog:hover{color:var(--navy);}
+
+    .frow{display:flex;justify-content:flex-end;margin:-2px 0 24px;}
+    .flink{font-size:13px;font-weight:500;color:var(--blue);}
+    .flink:hover{color:var(--crimson);text-decoration:underline;}
+
+    .bsub{
+      width:100%;padding:14px;border:none;border-radius:10px;
+      background:var(--crimson);color:#fff;
+      font-family:inherit;font-size:15.5px;font-weight:600;letter-spacing:.01em;
+      display:flex;align-items:center;justify-content:center;gap:9px;
+      cursor:pointer;
+      transition:background .2s,transform .1s;
+      box-shadow:0 8px 18px -8px rgba(205,14,71,.55);
+    }
+    .bsub:hover{background:var(--crimson-d);}
+    .bsub:active{transform:scale(.985);}
+    .bsub i{font-size:14px;transition:transform .2s;}
+    .bsub:hover i{transform:translateX(3px);}
+
+    .alert{
+      border-radius:10px;padding:12px 14px;margin-bottom:20px;
+      display:flex;align-items:center;gap:10px;font-size:13.5px;line-height:1.45;
+    }
+    .alert.err{background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C;}
+    .alert.info{background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;}
+    .alert i{font-size:15px;flex-shrink:0;}
+
+    .foot{
+      margin-top:34px;padding-top:20px;border-top:1px solid var(--bd);
+      display:flex;align-items:center;justify-content:space-between;gap:14px;
+      font-size:11.5px;color:var(--mt);
+    }
+    .foot .lock{display:flex;align-items:center;gap:6px;}
+    .foot .lock i{color:var(--blue);font-size:13px;}
+    .foot strong{color:var(--navy);font-weight:600;}
+
+    /* ─ Responsive ─ */
+    @media (max-width:1180px){
+      .root{grid-template-columns:38fr 62fr;}
+      .shot{display:none;}
+      .signin{padding:40px 7vw;}
+    }
+    @media (max-width:880px){
+      .root{grid-template-columns:1fr;min-height:0;}
+      .panel{
+        padding:34px 30px 30px;
+        display:block;
+      }
+      .panel::after{width:340px;height:340px;right:-180px;bottom:-170px;}
+      .headline{font-size:26px;max-width:none;}
+      .rule{margin:14px 0 0;width:44px;height:3px;}
+      .sub,.panel-bottom{display:none;}
+      .signin{padding:34px 26px 44px;}
+      .brand{width:100%;max-width:400px;margin:0 auto;}
+      .brand img{width:auto;min-width:0;height:40px;}
+      .form-wrap{margin:30px auto auto;}
+      .foot{margin-top:28px;}
+    }
+    @media (max-width:480px){
+      .panel{padding:26px 22px;}
+      .headline{font-size:22px;}
+      .form-wrap h1{font-size:25px;}
+      .signin{padding:26px 20px 34px;}
+      .foot{flex-direction:column;align-items:flex-start;gap:7px;}
+    }
+  </style>
+</head>
+<body>
+<div class="root">
+
+  <!-- ── Statement panel ── -->
+  <section class="panel">
+    <div class="panel-top">
+      <h2 class="headline">The best place<br>is right here.</h2>
+      <div class="rule"></div>
+      <p class="sub">One portal for your properties, tenants, invoices and maintenance &mdash; kept in order, always up to date.</p>
+    </div>
+    <div class="panel-bottom">
+      <ul class="points">
+        <li><i class="bi bi-buildings"></i> Properties &amp; leases in one place</li>
+        <li><i class="bi bi-receipt"></i> Invoicing and payment tracking</li>
+        <li><i class="bi bi-tools"></i> Service requests, start to finish</li>
+      </ul>
+      <p class="panel-note">Hearts &amp; Sleeves Property Management</p>
+    </div>
+  </section>
+
+  <!-- ── Photograph ── -->
+  <aside class="shot" role="presentation" aria-hidden="true"></aside>
+
+  <!-- ── Sign-in ── -->
+  <main class="signin">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='img/hslogo1.jpeg') }}" alt="Hearts &amp; Sleeves Property Management"/>
+    </div>
+
+    <div class="form-wrap">
+      <p class="eyebrow">Property Portal</p>
+      <h1>Welcome back</h1>
+      <p class="lede">Sign in to access your dashboard.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+          <div class="alert {{ 'err' if cat=='danger' else 'info' }}">
+            <i class="bi bi-{{ 'exclamation-circle-fill' if cat=='danger' else 'info-circle-fill' }}"></i>
+            <span>{{ msg }}</span>
+          </div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="POST" action="{{ url_for('login') }}" id="lf">
+        <div class="fg">
+          <label class="fl" for="ef">Email Address</label>
+          <div class="fw">
+            <i class="bi bi-envelope fi"></i>
+            <input class="ff" id="ef" type="email" name="email" placeholder="you@example.com" required autocomplete="email" autofocus/>
+          </div>
+        </div>
+
+        <div class="fg">
+          <label class="fl" for="pf">Password</label>
+          <div class="fw">
+            <i class="bi bi-lock fi"></i>
+            <input class="ff" id="pf" type="password" name="password" placeholder="Enter your password" required autocomplete="current-password"/>
+            <button type="button" class="ptog" onclick="toggleP()" aria-label="Show password">
+              <i class="bi bi-eye" id="pi"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="frow"><a href="#" class="flink">Forgot password?</a></div>
+
+        <button type="submit" class="bsub">Sign In <i class="bi bi-arrow-right"></i></button>
+      </form>
+
+      <div class="foot">
+        <span class="lock"><i class="bi bi-shield-lock-fill"></i> SSL Encrypted</span>
+        <span>&copy; <strong>Hearts &amp; Sleeves</strong> Property Management</span>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<script>
+function toggleP(){
+  const f=document.getElementById('pf'), i=document.getElementById('pi');
+  const show = f.type==='password';
+  f.type = show ? 'text' : 'password';
+  i.className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+  i.parentElement.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ─ Settings Layout ─ */
+  .settings-grid { 
+    display: grid; 
+    grid-template-columns: 1fr 1fr; 
+    gap: 16px; 
+    align-items: start; 
+  }
+
+  /* ─ Responsive Adjustments ─ */
+  @media (max-width: 992px) {
+    .settings-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Toggle Switch adjustment for mobile */
+  .toggle-label { position: relative; width: 40px; height: 22px; cursor: pointer; flex-shrink: 0; }
+  .toggle-label input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .toggle-slider { position: absolute; inset: 0; border-radius: 11px; background: var(--cr); transition: .3s; }
+  .toggle-handle { position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .3s; }
+  
+  /* Ensure inputs/buttons scale */
+  .btn-cr, .btn-nv { width: 100%; justify-content: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if role=='Tenant' %}
+<div style="background:var(--nv-l);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px;margin-bottom:20px;font-size:13.5px;color:var(--nv)">
+  <i class="bi bi-info-circle-fill"></i> As a Tenant, you can update your profile and password. Payment and integration settings are managed by Admin.
+</div>
+{% endif %}
+
+{# ── Top 3 cards — Profile, Security, Notifications ─────────────────── #}
+<form method="POST" action="{{ url_for('update_settings') }}">
+  <div class="settings-grid">
+
+    <!-- Profile -->
+    <div class="card">
+      <div class="card-hdr"><span class="card-title">Profile Information</span></div>
+      <div class="card-body">
+        <div class="df aic g12" style="margin-bottom:22px">
+          <div class="av" style="width:58px;height:58px;font-size:22px;flex-shrink:0">{{ session.user[0] }}</div>
+          <div>
+            <div class="fw7" style="font-size:16px">{{ session.user }}</div>
+            <span class="badge-role br-{{ role }}" style="padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700">{{ role }}</span>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="fg"><label class="form-label">First Name</label><input class="form-ctrl" value="{{ session.user.split()[0] }}"/></div>
+          <div class="fg"><label class="form-label">Last Name</label><input class="form-ctrl" value="{{ session.user.split()[-1] if session.user.split()|length > 1 else '' }}"/></div>
+        </div>
+        <div class="fg"><label class="form-label">Email</label><input class="form-ctrl" type="email" value="{{ session.email }}"/></div>
+        <div class="fg"><label class="form-label">Phone</label><input class="form-ctrl" placeholder="+234 800 000 0000"/></div>
+        <div class="fg"><label class="form-label">Role</label><input class="form-ctrl" value="{{ role }}" readonly style="background:var(--bg);cursor:not-allowed"/></div>
+        <button type="submit" class="btn-cr"><i class="bi bi-check-lg"></i> Save Changes</button>
+      </div>
+    </div>
+
+    <!-- Security -->
+    <div class="card">
+      <div class="card-hdr"><span class="card-title">Security</span></div>
+      <div class="card-body">
+        <div class="fg"><label class="form-label">Current Password</label><input class="form-ctrl" type="password" placeholder="••••••••"/></div>
+        <div class="fg"><label class="form-label">New Password</label><input class="form-ctrl" type="password" placeholder="••••••••"/></div>
+        <div class="fg"><label class="form-label">Confirm Password</label><input class="form-ctrl" type="password" placeholder="••••••••"/></div>
+        <button type="button" class="btn-nv"><i class="bi bi-lock"></i> Update Password</button>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="card">
+      <div class="card-hdr"><span class="card-title">Notifications</span></div>
+      <div class="card-body">
+        {% set notifs = ['New invoice issued', 'Payment confirmed', 'Service request update'] if role=='Tenant' else ['New service request','Payment received','Invoice overdue','Tenant move-in/out','Maintenance completed','Monthly report'] %}
+        {% for lbl in notifs %}
+        <div class="df aic" style="justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--bg)">
+          <div><div style="font-size:13.5px;font-weight:500">{{ lbl }}</div><div style="font-size:11.5px;color:var(--mt)">Email & in-app</div></div>
+          <label class="toggle-label">
+            <input type="checkbox" checked/>
+            <span class="toggle-slider"><span class="toggle-handle"></span></span>
+          </label>
+        </div>{% endfor %}
+      </div>
+    </div>
+
+  </div>
+</form>
+
+{# ── Paystack Integration — its own standalone form (MUST NOT be nested) #}
+{% if session.role == 'Admin' and has_perm('manage_settings') %}
+<div class="settings-grid" style="margin-top:16px">
+
+  {# Bank Account card — left column #}
+  <form method="POST" action="{{ url_for('save_bank_config') }}">
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Bank Account</span>
+        <span class="badge {{ 'b-confirmed' if bank_cfg.BANK_ACCOUNT_NUMBER else 'b-overdue' }}" style="font-size:11px">
+          {{ 'Configured' if bank_cfg.BANK_ACCOUNT_NUMBER else 'Not Set' }}
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="df aic g12" style="background:var(--nv-l);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+          <div style="width:38px;height:38px;background:#1a7f3c;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;flex-shrink:0"><i class="bi bi-bank"></i></div>
+          <div>
+            <div class="fw6" style="font-size:13.5px">Bank Transfer Details</div>
+            <div style="font-size:11.5px;color:var(--mt)">Shown to tenants & landlords when paying via bank transfer</div>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Bank Name</label>
+          <input class="form-ctrl" name="bank_name" value="{{ bank_cfg.BANK_NAME }}" placeholder="e.g. First Bank of Nigeria"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Account Number</label>
+          <input class="form-ctrl" name="bank_account_number" value="{{ bank_cfg.BANK_ACCOUNT_NUMBER }}" placeholder="0123456789" style="font-family:monospace;font-size:13px;letter-spacing:.08em"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Account Name</label>
+          <input class="form-ctrl" name="bank_account_name" value="{{ bank_cfg.BANK_ACCOUNT_NAME }}" placeholder="e.g. Haspm Properties Ltd"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Transfer Instructions / Note</label>
+          <textarea class="form-ctrl" name="bank_transfer_note" rows="3" placeholder="e.g. Use your invoice number as payment reference">{{ bank_cfg.BANK_TRANSFER_NOTE }}</textarea>
+        </div>
+        <button type="submit" class="btn-nv" style="width:100%;justify-content:center">
+          <i class="bi bi-floppy"></i> Save Bank Details
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <form method="POST" action="{{ url_for('save_paystack_config') }}">
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Paystack Integration</span>
+        <span class="badge {{ 'b-confirmed' if paystack_cfg.PAYSTACK_SECRET_KEY else 'b-overdue' }}" style="font-size:11px">
+          {{ 'Configured' if paystack_cfg.PAYSTACK_SECRET_KEY else 'Not Set' }}
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="df aic g12" style="background:var(--nv-l);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+          <div style="width:38px;height:38px;background:#00c3f7;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;flex-shrink:0">PAY</div>
+          <div>
+            <div class="fw6" style="font-size:13.5px">Paystack</div>
+            <div style="font-size:11.5px;color:var(--mt)">Tenant card payments via Paystack checkout</div>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Public Key</label>
+          <input class="form-ctrl" name="paystack_public_key"
+                 value="{{ paystack_cfg.PAYSTACK_PUBLIC_KEY }}"
+                 placeholder="pk_test_..." style="font-family:monospace;font-size:12.5px"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Secret Key</label>
+          <input class="form-ctrl" name="paystack_secret_key" type="password"
+                 placeholder="Leave blank to keep existing"
+                 style="font-family:monospace;font-size:12.5px"/>
+          <div style="font-size:11.5px;color:var(--mt);margin-top:3px">Get your keys from <strong>Paystack Dashboard → Settings → API Keys</strong>.</div>
+        </div>
+        <button type="submit" class="btn-nv" style="width:100%;justify-content:center;margin-bottom:16px">
+          <i class="bi bi-key"></i> Save Paystack Keys
+        </button>
+        {# Webhook / Callback URLs for dashboard config #}
+        <div style="background:var(--bg);border-radius:9px;padding:12px 14px;font-size:12.5px">
+          <div class="fw6" style="margin-bottom:8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mt)">Configure in Paystack Dashboard</div>
+          <div style="margin-bottom:6px">
+            <span style="color:var(--mt);font-size:11.5px">Callback URL</span>
+            <div style="font-family:monospace;background:var(--wh);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;margin-top:3px;font-size:12px;word-break:break-all">
+              {{ request.host_url.rstrip('/') }}/invoices/paystack/callback
+            </div>
+          </div>
+          <div>
+            <span style="color:var(--mt);font-size:11.5px">Webhook URL</span>
+            <div style="font-family:monospace;background:var(--wh);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;margin-top:3px;font-size:12px;word-break:break-all">
+              {{ request.host_url.rstrip('/') }}/invoices/paystack/webhook
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+
+</div>
+{% elif role == 'Landlord' %}
+<div class="settings-grid" style="margin-top:16px">
+  <div></div>
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">Payment Settings</span></div>
+    <div class="card-body">
+      <div style="background:var(--nv-l);border:1px solid #BFDBFE;border-radius:10px;padding:14px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--nv)">
+        <i class="bi bi-shield-lock-fill" style="font-size:20px"></i>
+        <div><div class="fw6">Paystack is configured by Admin</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── EMAIL CONFIGURATION (Management only) ────────────────────────── #}
+{% if role == 'Admin' and has_perm('manage_settings') %}
+<div id="email" style="margin-top:24px">
+  <div style="font-size:12px;font-weight:600;color:var(--mt);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;display:flex;align-items:center;gap:8px">
+    <i class="bi bi-envelope-at" style="color:var(--nv)"></i> Email & Automation
+    <span style="flex:1;height:1px;background:var(--bd);display:block"></span>
+  </div>
+
+  <div class="settings-grid">
+
+    {# SMTP Config card #}
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title"><i class="bi bi-server" style="color:var(--nv);margin-right:6px"></i>SMTP Configuration</span>
+        <span class="badge {{ 'b-confirmed' if email_cfg.MAIL_SERVER else 'b-overdue' }}" style="font-size:11px">
+          {{ 'Configured' if email_cfg.MAIL_SERVER else 'Not Set' }}
+        </span>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('save_email_config') }}">
+          <div class="g2">
+            <div class="fg">
+              <label class="form-label">SMTP Server *</label>
+              <input class="form-ctrl" name="mail_server" placeholder="smtp.gmail.com" value="{{ email_cfg.MAIL_SERVER }}" style="font-family:monospace;font-size:13px"/>
+            </div>
+            <div class="fg">
+              <label class="form-label">Port</label>
+              <input class="form-ctrl" name="mail_port" type="number" value="{{ email_cfg.MAIL_PORT }}" style="font-family:monospace;font-size:13px"/>
+            </div>
+          </div>
+          <div class="fg">
+            <label class="form-label">Sender Email (Username)</label>
+            <input class="form-ctrl" name="mail_username" type="email" placeholder="yourapp@gmail.com" value="{{ email_cfg.MAIL_USERNAME }}" style="font-family:monospace;font-size:13px"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">App Password</label>
+            <input class="form-ctrl" name="mail_password" type="password" placeholder="Leave blank to keep existing"/>
+            <div style="font-size:11.5px;color:var(--mt);margin-top:4px">For Gmail: use an <em>App Password</em>, not your account password.</div>
+          </div>
+          <div class="fg">
+            <label class="form-label">Default Sender Name / Email</label>
+            <input class="form-ctrl" name="mail_sender" placeholder="HS Property &lt;noreply@yourapp.com&gt;" value="{{ email_cfg.MAIL_DEFAULT_SENDER }}" style="font-family:monospace;font-size:13px"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Encryption</label>
+            <select name="mail_tls" class="form-sel">
+              <option value="1" {{ 'selected' if email_cfg.MAIL_USE_TLS }}>TLS (port 587) — recommended</option>
+              <option value="0" {{ 'selected' if not email_cfg.MAIL_USE_TLS }}>None / SSL (port 465)</option>
+            </select>
+          </div>
+          <button type="submit" class="btn-nv" style="width:100%;justify-content:center"><i class="bi bi-floppy"></i> Save SMTP Settings</button>
+        </form>
+      </div>
+    </div>
+
+    {# Right column: test email + scheduler #}
+    <div style="display:flex;flex-direction:column;gap:16px">
+
+      {# Test Email #}
+      <div class="card">
+        <div class="card-hdr"><span class="card-title"><i class="bi bi-send" style="color:var(--gr);margin-right:6px"></i>Send Test Email</span></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--mt);margin:0 0 14px">Verify your SMTP configuration by sending a test message.</p>
+          <form method="POST" action="{{ url_for('test_email') }}">
+            <div class="fg">
+              <label class="form-label">Send To</label>
+              <input class="form-ctrl" name="test_recipient" type="email" placeholder="{{ session.email }}" value="{{ session.email }}"/>
+            </div>
+            <button type="submit" class="btn-ghost" style="width:100%;justify-content:center">
+              <i class="bi bi-envelope-check"></i> Send Test Email
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {# Scheduler jobs #}
+      <div class="card">
+        <div class="card-hdr"><span class="card-title"><i class="bi bi-clock-history" style="color:var(--wn);margin-right:6px"></i>Automated Jobs</span></div>
+        <div class="card-body">
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+            {% for job, desc in [
+              ('Mark Overdue Invoices', 'Flips pending → overdue; emails tenants (weekly)'),
+              ('Monthly Rent Invoices', 'Generates rent invoice if none exists this month'),
+              ('Lease Expiry Check', 'Warns tenants 30 days before lease ends + final invoice')
+            ] %}
+            <div style="background:var(--bg);border-radius:9px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+              <i class="bi bi-circle-fill" style="font-size:7px;color:var(--gr)"></i>
+              <div>
+                <div style="font-size:13px;font-weight:600">{{ job }}</div>
+                <div style="font-size:11.5px;color:var(--mt)">{{ desc }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <div style="font-size:12px;color:var(--mt);margin-bottom:12px;padding:8px 12px;background:var(--nv-l);border-radius:8px;color:var(--nv)">
+            <i class="bi bi-info-circle" style="margin-right:5px"></i>Jobs run automatically at <strong>08:00 WAT</strong> daily.
+          </div>
+          <form method="POST" action="{{ url_for('run_jobs_now') }}" onsubmit="return confirm('Run all scheduler jobs now?')">
+            <button type="submit" class="btn-cr" style="width:100%;justify-content:center">
+              <i class="bi bi-play-circle"></i> Run All Jobs Now
+            </button>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {# Notification Log #}
+  <div class="card" style="margin-top:16px">
+    <div class="card-hdr">
+      <span class="card-title"><i class="bi bi-bell-history" style="color:var(--nv);margin-right:6px"></i>Notification Log</span>
+      <span style="font-size:12px;color:var(--mt)">Last 50 emails sent by the system</span>
+    </div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Type</th><th>Tenant</th><th>Recipient</th><th>Sent At</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for log in notification_logs %}
+          <tr>
+            <td>
+              <span class="badge {{ 'b-in-progress' if log.notif_type=='rent_invoice' else 'b-overdue' if log.notif_type=='overdue' else 'b-pending' }}" style="font-size:10.5px">
+                {{ log.notif_type | replace('_', ' ') | title }}
+              </span>
+            </td>
+            <td style="font-size:13px;font-weight:500">{{ log.tenant.name if log.tenant else '—' }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ log.recipient or '—' }}</td>
+            <td style="font-size:12px;color:var(--mt)">{{ log.sent_at.strftime('%b %d %Y, %H:%M') }}</td>
+            <td>
+              <span class="badge {{ 'b-confirmed' if log.status=='sent' else 'b-overdue' }}">{{ log.status }}</span>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--mt)">
+            <i class="bi bi-bell-slash" style="font-size:24px;opacity:.3;display:block;margin-bottom:8px"></i>
+            No notifications sent yet. Configure SMTP and run the jobs to get started.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

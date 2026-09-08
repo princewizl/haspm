@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ msg.subject }}{% endblock %}
+{% block page_title %}Message{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('messages') }}" class="btn-ghost sm">
+  <i class="bi bi-arrow-left"></i> Back to Inbox
+</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .thread-wrap { max-width:720px; }
+  .thread-header { background:var(--cd); border:1px solid var(--bd); border-radius:12px;
+                   padding:20px 24px; margin-bottom:16px; }
+  .thread-subject { font-size:18px; font-weight:700; color:var(--tx); margin-bottom:12px; }
+  .thread-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .thread-av { width:36px; height:36px; border-radius:50%; background:var(--nv); color:#fff;
+               display:flex; align-items:center; justify-content:center; font-size:14px;
+               font-weight:700; flex-shrink:0; }
+  .thread-from { font-size:13.5px; font-weight:600; color:var(--tx); }
+  .thread-role-tag { font-size:11px; background:var(--bg); color:var(--mt); padding:2px 8px;
+                     border-radius:99px; font-weight:500; }
+  .thread-date { font-size:12px; color:var(--mt); margin-left:auto; }
+
+  .msg-bubble { background:var(--cd); border:1px solid var(--bd); border-radius:12px;
+                padding:18px 22px; margin-bottom:12px; }
+  .msg-bubble.mine { background:var(--nv-l,#eef3ff); border-color:var(--nv); }
+  .msg-bubble-meta { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .msg-bubble-av { width:30px; height:30px; border-radius:50%; background:var(--nv); color:#fff;
+                   display:flex; align-items:center; justify-content:center; font-size:12px;
+                   font-weight:700; flex-shrink:0; }
+  .msg-bubble-av.gr { background:var(--gr); }
+  .msg-bubble-name { font-size:13px; font-weight:600; }
+  .msg-bubble-time { font-size:11px; color:var(--mt); margin-left:auto; }
+  .msg-bubble-body { font-size:13.5px; line-height:1.65; color:var(--tx); white-space:pre-wrap; }
+
+  .reply-box { background:var(--cd); border:1px solid var(--bd); border-radius:12px; padding:20px 22px; }
+  .reply-box textarea { resize:vertical; min-height:90px; }
+  .delete-form { display:inline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="thread-wrap">
+
+  <!-- Subject header -->
+  <div class="thread-header">
+    <div class="thread-subject">{{ msg.subject }}</div>
+    <div class="thread-meta">
+      <div class="thread-av">{{ msg.sender.name[0].upper() }}</div>
+      <div>
+        <div class="thread-from">{{ msg.sender.name }}</div>
+        <div style="font-size:11.5px;color:var(--mt)">to {{ msg.recipient.name }}</div>
+      </div>
+      <span class="thread-role-tag">{{ msg.sender.role }}</span>
+      <span class="thread-date">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</span>
+    </div>
+  </div>
+
+  <!-- Original message -->
+  {% set uid = session.user_id %}
+  <div class="msg-bubble {% if msg.sender_id == uid %}mine{% endif %}">
+    <div class="msg-bubble-meta">
+      <div class="msg-bubble-av {% if msg.sender_id != uid %}gr{% endif %}">
+        {{ msg.sender.name[0].upper() }}
+      </div>
+      <span class="msg-bubble-name">{{ msg.sender.name }}</span>
+      <span class="msg-bubble-time">{{ msg.created_at.strftime('%b %d, %Y %H:%M') }}</span>
+    </div>
+    <div class="msg-bubble-body">{{ msg.body }}</div>
+  </div>
+
+  <!-- Replies -->
+  {% for r in replies %}
+  <div class="msg-bubble {% if r.sender_id == uid %}mine{% endif %}">
+    <div class="msg-bubble-meta">
+      <div class="msg-bubble-av {% if r.sender_id != uid %}gr{% endif %}">
+        {{ r.sender.name[0].upper() }}
+      </div>
+      <span class="msg-bubble-name">{{ r.sender.name }}</span>
+      <span class="msg-bubble-time">{{ r.created_at.strftime('%b %d, %Y %H:%M') }}</span>
+    </div>
+    <div class="msg-bubble-body">{{ r.body }}</div>
+  </div>
+  {% endfor %}
+
+  <!-- Reply form -->
+  <div class="reply-box">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--tx)">Reply</div>
+    <form method="POST" action="{{ url_for('message_reply', msg_id=msg.id) }}">
+      <textarea class="form-ctrl" name="body" placeholder="Write your reply…" required
+                style="margin-bottom:12px"></textarea>
+      <div class="df g8">
+        <button type="submit" class="btn-cr sm">
+          <i class="bi bi-send"></i> Send Reply
+        </button>
+        <form class="delete-form" method="POST"
+              action="{{ url_for('message_delete', msg_id=msg.id) }}"
+              onsubmit="return confirm('Delete this message and all replies?')">
+          <button type="submit" class="btn-ghost sm" style="color:var(--cr)">
+            <i class="bi bi-trash"></i> Delete
+          </button>
+        </form>
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

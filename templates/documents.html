@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+{% block title %}Documents{% endblock %}
+{% block page_title %}Documents{% endblock %}
+
+{% block topbar_actions %}
+<div class="topbar-actions-wrap">
+  {% if selected_tenant %}
+  <a href="{{ url_for('documents') }}" class="btn-ghost sm">
+    <i class="bi bi-arrow-left"></i> All Tenants
+  </a>
+  {% endif %}
+  <form method="get" action="{{ url_for('documents') }}" class="search-box">
+    <i class="bi bi-search"></i>
+    <input type="text" name="q" value="{{ q }}" placeholder="Search tenants…"/>
+    {% if q %}<a href="{{ url_for('documents') }}" class="srch-clear"><i class="bi bi-x"></i></a>{% endif %}
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .topbar-actions-wrap { display: flex; align-items: center; gap: 10px; }
+  .search-box { position: relative; display: flex; align-items: center; }
+  .srch-clear { position: absolute; right: 10px; color: var(--mt); font-size: 14px; text-decoration: none; }
+  .srch-clear:hover { color: var(--cr); }
+
+  /* ── Layout: two-column when tenant selected ── */
+  .doc-layout { display: flex; gap: 20px; align-items: flex-start; }
+  .doc-sidebar { width: 280px; flex-shrink: 0; }
+  .doc-main { flex: 1; min-width: 0; }
+
+  /* ── Tenant list card ── */
+  .tenant-list { list-style: none; padding: 0; margin: 0; }
+  .tenant-list-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; border-radius: 10px; cursor: pointer;
+    transition: background .15s; text-decoration: none; color: var(--tx);
+    border-left: 3px solid transparent;
+  }
+  .tenant-list-item:hover { background: var(--bg); }
+  .tenant-list-item.active {
+    background: var(--cr-l); border-left-color: var(--cr); color: var(--cr);
+  }
+  .tenant-list-item .tl-meta { flex: 1; min-width: 0; }
+  .tenant-list-item .tl-name {
+    font-size: 13.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tenant-list-item .tl-prop {
+    font-size: 11.5px; color: var(--mt);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tenant-list-item.active .tl-prop { color: var(--cr); opacity: .7; }
+  .tl-count {
+    background: var(--bg); border: 1px solid var(--bd);
+    border-radius: 99px; padding: 1px 8px;
+    font-size: 11px; font-weight: 700; color: var(--mt);
+    flex-shrink: 0;
+  }
+  .tenant-list-item.active .tl-count {
+    background: var(--cr); color: #fff; border-color: var(--cr);
+  }
+
+  /* ── Tenant avatar (small) ── */
+  .t-av {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 13px; color: #fff;
+  }
+
+  /* ── Document type badge ── */
+  .doc-type {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .dt-rental_application { background: var(--nv-l); color: var(--nv); border-color: #BFDBFE; }
+  .dt-id_document        { background: #F1F5F9;     color: var(--mt); border-color: var(--bd); }
+  .dt-tenancy_agreement  { background: #ECFDF5;     color: #047857;   border-color: #D1FAE5; }
+  .dt-payment_proof      { background: #FFFBEB;     color: #B45309;   border-color: #FDE68A; }
+  .dt-other              { background: var(--cr-l);  color: var(--cr); border-color: #FED7E2; }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 2px dashed var(--bd); border-radius: 12px;
+    padding: 28px 20px; text-align: center; cursor: pointer;
+    transition: all .2s; background: var(--bg);
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--nv); background: var(--nv-l);
+  }
+  .upload-zone i { font-size: 28px; color: var(--mt); display: block; margin-bottom: 8px; }
+  .upload-zone p { font-size: 13px; color: var(--mt); margin: 0; }
+  .upload-zone strong { color: var(--nv); }
+
+  /* ── File row actions ── */
+  .act-btn {
+    width: 30px; height: 30px; border-radius: 7px;
+    border: 1px solid var(--bd); background: var(--wh);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--mt); cursor: pointer; font-size: 13px; transition: all .15s;
+    text-decoration: none;
+  }
+  .act-btn:hover { background: var(--bg); color: var(--nv); border-color: var(--nv); }
+  .act-btn.act-danger:hover { background: rgba(201,24,74,.06); color: var(--cr); border-color: var(--cr); }
+
+  /* ── Empty state ── */
+  .empty-docs {
+    text-align: center; padding: 50px 20px; color: var(--mt);
+  }
+  .empty-docs i { font-size: 38px; opacity: .25; display: block; margin-bottom: 12px; }
+  .empty-docs p { font-size: 14px; margin: 0 0 16px; }
+
+  /* ── Selected tenant header ── */
+  .tenant-doc-header {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 20px;
+  }
+  .tenant-doc-header .t-av { width: 44px; height: 44px; font-size: 17px; }
+  .tenant-doc-header .th-name { font-size: 17px; font-weight: 800; color: var(--tx); }
+  .tenant-doc-header .th-meta { font-size: 12.5px; color: var(--mt); margin-top: 2px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .doc-layout { flex-direction: column; }
+    .doc-sidebar { width: 100%; }
+  }
+  @media (max-width: 640px) {
+    .topbar-actions-wrap { flex-wrap: wrap; }
+    .col-hide-sm { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Page header ── -->
+<div class="page-header">
+  <div>
+    <div class="page-title">Tenant Documents</div>
+    <div style="font-size:13px;color:var(--mt);margin-top:3px">
+      Upload and manage documents for tenants
+    </div>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <!-- ══ LEFT: Tenant list ══ -->
+  <div class="doc-sidebar">
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Tenants
+          <span style="font-size:12px;color:var(--mt);font-weight:400;margin-left:5px">({{ tenants|length }})</span>
+        </span>
+      </div>
+      <div style="padding:8px;">
+        {% if tenants %}
+        <ul class="tenant-list">
+          {% for t in tenants %}
+          <li>
+            <a href="{{ url_for('documents', tenant_id=t.id, q=q) }}"
+               class="tenant-list-item {% if selected_tenant and selected_tenant.id == t.id %}active{% endif %}">
+              <div class="t-av" style="background:{{ ['var(--nv)','var(--cr)','var(--gr)','var(--wn)'][loop.index0 % 4] }}">
+                {{ t.name[0]|upper }}
+              </div>
+              <div class="tl-meta">
+                <div class="tl-name">{{ t.name }}</div>
+                <div class="tl-prop">{{ t.property_name }}</div>
+              </div>
+              <span class="tl-count">{{ t.doc_count }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div style="text-align:center;padding:24px;color:var(--mt);font-size:13px">
+          <i class="bi bi-people" style="font-size:24px;opacity:.3;display:block;margin-bottom:8px"></i>
+          No tenants found
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ RIGHT: Document panel ══ -->
+  <div class="doc-main">
+
+    {% if selected_tenant %}
+
+    <!-- Tenant header -->
+    <div class="tenant-doc-header">
+      <div class="t-av" style="background:var(--nv)">{{ selected_tenant.name[0]|upper }}</div>
+      <div>
+        <div class="th-name">{{ selected_tenant.name }}</div>
+        <div class="th-meta">
+          {{ selected_tenant.email }}
+          {% if selected_tenant.property_name and selected_tenant.property_name != '—' %}
+          &nbsp;·&nbsp; {{ selected_tenant.property_name }}, Unit {{ selected_tenant.unit_number }}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload card -->
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-hdr">
+        <span class="card-title"><i class="bi bi-cloud-arrow-up" style="color:var(--nv);margin-right:6px"></i>Upload Document</span>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('upload_document', tenant_id=selected_tenant.id) }}"
+              enctype="multipart/form-data" id="uploadForm">
+          <div class="g2" style="margin-bottom:14px">
+            <div class="fg">
+              <label class="form-label">Document Type</label>
+              <select class="form-sel" name="doc_type" required>
+                <option value="">— Select type —</option>
+                <option value="rental_application">Rental Application</option>
+                <option value="tenancy_agreement">Tenancy Agreement</option>
+                <option value="id_document">ID Document</option>
+                <option value="payment_proof">Payment Proof</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="form-label">Label / Notes <span style="font-weight:400;font-size:10px">(optional)</span></label>
+              <input class="form-ctrl" name="label" placeholder="e.g. Signed lease 2025…"/>
+            </div>
+          </div>
+
+          <!-- Drag-drop zone -->
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <i class="bi bi-file-earmark-arrow-up"></i>
+            <p>Drag & drop or <strong>click to browse</strong></p>
+            <p style="font-size:11.5px;margin-top:4px">PDF, JPG, PNG — max 10 MB</p>
+            <p id="selectedFileName" style="font-size:12px;color:var(--nv);font-weight:600;margin-top:6px;display:none"></p>
+          </div>
+          <input type="file" id="fileInput" name="file" accept=".pdf,.jpg,.jpeg,.png"
+                 style="display:none" onchange="handleFileSelect(this)" required/>
+
+          <div style="display:flex;gap:10px;margin-top:14px">
+            <button type="submit" class="btn-nv" id="uploadBtn" style="flex:1;justify-content:center" disabled>
+              <i class="bi bi-cloud-arrow-up"></i> Upload Document
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Documents table -->
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">
+          Documents
+          <span style="font-size:12px;color:var(--mt);font-weight:400;margin-left:5px">({{ documents|length }})</span>
+        </span>
+        {% if documents %}
+        <a href="{{ url_for('download_all_documents', tenant_id=selected_tenant.id) }}"
+           class="btn-ghost sm">
+          <i class="bi bi-download"></i> Download All
+        </a>
+        {% endif %}
+      </div>
+
+      {% if documents %}
+      <div class="tw">
+        <table class="ht">
+          <thead>
+            <tr>
+              <th>Document</th>
+              <th class="col-hide-sm">Type</th>
+              <th class="col-hide-sm">Uploaded</th>
+              <th>Size</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for doc in documents %}
+            <tr>
+              <!-- File name + label -->
+              <td>
+                <div style="display:flex;align-items:center;gap:9px">
+                  <div style="width:32px;height:32px;border-radius:8px;background:var(--nv-l);
+                              display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                    <i class="bi bi-{{ 'file-earmark-pdf text-cr' if doc.original_filename.endswith('.pdf')
+                                        else 'file-earmark-image text-nv' }}"
+                       style="font-size:15px"></i>
+                  </div>
+                  <div style="min-width:0">
+                    <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">
+                      {{ doc.label or doc.original_filename }}
+                    </div>
+                    {% if doc.label %}
+                    <div style="font-size:11px;color:var(--mt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">
+                      {{ doc.original_filename }}
+                    </div>
+                    {% endif %}
+                  </div>
+                </div>
+              </td>
+
+              <!-- Type badge -->
+              <td class="col-hide-sm">
+                <span class="doc-type dt-{{ doc.doc_type }}">
+                  <i class="bi bi-{{ 
+                    'file-earmark-text'  if doc.doc_type == 'rental_application'
+                    else 'file-earmark-check' if doc.doc_type == 'tenancy_agreement'
+                    else 'person-badge'      if doc.doc_type == 'id_document'
+                    else 'receipt'           if doc.doc_type == 'payment_proof'
+                    else 'paperclip'
+                  }}" style="font-size:10px"></i>
+                  {{ doc.doc_type | replace('_', ' ') | title }}
+                </span>
+              </td>
+
+              <!-- Uploaded date -->
+              <td class="col-hide-sm">
+                <div style="font-size:13px">{{ doc.uploaded_at.strftime('%b %d, %Y') }}</div>
+                <div style="font-size:11px;color:var(--mt)">{{ doc.uploaded_at.strftime('%I:%M %p') }}</div>
+              </td>
+
+              <!-- File size -->
+              <td>
+                <span style="font-size:13px;color:var(--mt)">{{ doc.file_size_str }}</span>
+              </td>
+
+              <!-- Actions -->
+              <td>
+                <div style="display:flex;gap:5px;flex-wrap:nowrap">
+                  <a href="{{ url_for('view_document', doc_id=doc.id) }}"
+                     target="_blank" class="act-btn" title="View">
+                    <i class="bi bi-eye"></i>
+                  </a>
+                  <a href="{{ url_for('download_document', doc_id=doc.id) }}"
+                     class="act-btn" title="Download">
+                    <i class="bi bi-download"></i>
+                  </a>
+                  <form method="POST"
+                        action="{{ url_for('delete_document', doc_id=doc.id) }}"
+                        style="display:inline"
+                        onsubmit="return confirm('Delete this document? This cannot be undone.')">
+                    <button type="submit" class="act-btn act-danger" title="Delete">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-docs">
+        <i class="bi bi-folder2-open"></i>
+        <p>No documents uploaded yet for this tenant.</p>
+        <p style="font-size:12.5px;color:var(--mt)">Use the upload form above to add their first document.</p>
+      </div>
+      {% endif %}
+    </div>
+
+    {% else %}
+
+    <!-- No tenant selected state -->
+    <div class="card">
+      <div class="empty-docs" style="padding:80px 20px">
+        <i class="bi bi-folder2"></i>
+        <p style="font-size:15px;font-weight:600;color:var(--tx)">Select a tenant</p>
+        <p>Choose a tenant from the list on the left to view and manage their documents.</p>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>{# end doc-main #}
+
+</div>{# end doc-layout #}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// ── Drag and drop ──────────────────────────────────────────────────
+const zone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
+const fileNameEl = document.getElementById('selectedFileName');
+
+if (zone) {
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
+}
+
+function handleFileSelect(input) {
+  if (input.files[0]) setFile(input.files[0]);
+}
+
+function setFile(file) {
+  // Validate type
+  const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
+  if (!allowed.includes(file.type)) {
+    alert('Only PDF, JPG and PNG files are allowed.');
+    return;
+  }
+  // Validate size (10 MB)
+  if (file.size > 10 * 1024 * 1024) {
+    alert('File must be under 10 MB.');
+    return;
+  }
+
+  // Update the actual file input
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  fileInput.files = dt.files;
+
+  // Show file name
+  const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+  fileNameEl.textContent = `${file.name} (${sizeMB} MB)`;
+  fileNameEl.style.display = 'block';
+  uploadBtn.disabled = false;
+}
+</script>
+{% endblock %}

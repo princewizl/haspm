@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Maintenance Costs{% endblock %}
+{% block page_title %}Maintenance Costs{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn-cr sm" onclick="openModal('addExpenseModal')">
+  <i class="bi bi-plus-lg"></i> Add Cost Estimate
+</button>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .exp-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
+  @media(max-width:700px){ .exp-kpis{grid-template-columns:1fr} }
+  .exp-kpi { background:var(--cd); border:1px solid var(--bd); border-radius:12px; padding:16px 18px; }
+  .exp-kpi .lbl { font-size:11.5px; color:var(--mt); font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
+  .exp-kpi .val { font-size:20px; font-weight:800; margin-top:4px; }
+
+  .exp-table-wrap { background:var(--cd); border:1px solid var(--bd); border-radius:12px; overflow-x:auto; }
+  .exp-table { width:100%; border-collapse:collapse; font-size:13px; min-width:760px; }
+  .exp-table th { text-align:left; padding:12px 14px; font-size:11px; text-transform:uppercase;
+                  letter-spacing:.05em; color:var(--mt); border-bottom:1px solid var(--bd); }
+  .exp-table td { padding:11px 14px; border-bottom:1px solid var(--bg); }
+  .exp-table tr:last-child td { border-bottom:none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="background:var(--cr-l);border:1px solid var(--bd);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:13px;color:var(--tx)">
+  <i class="bi bi-info-circle" style="margin-right:6px"></i>
+  Maintenance department view — showing maintenance budgets and expense costs only.
+  Job details are under <a href="{{ url_for('service') }}" style="color:var(--cr);font-weight:600">Service Requests</a>.
+</div>
+
+<div class="exp-kpis">
+  <div class="exp-kpi">
+    <div class="lbl">Total Expenses</div>
+    <div class="val">{{ fmt(total_all) }}</div>
+  </div>
+  <div class="exp-kpi">
+    <div class="lbl">Paid / Approved</div>
+    <div class="val" style="color:var(--gr)">{{ fmt(total_paid) }}</div>
+  </div>
+  <div class="exp-kpi">
+    <div class="lbl">Unpaid / Pending</div>
+    <div class="val" style="color:var(--wn)">{{ fmt(total_unpaid) }}</div>
+  </div>
+</div>
+
+<div class="exp-table-wrap">
+  <table class="exp-table">
+    <thead>
+      <tr>
+        <th>Ref</th><th>Date</th><th>Property</th><th>Category</th>
+        <th>Description</th><th>Vendor</th><th>Amount</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in expenses %}
+      <tr>
+        <td style="font-weight:600">{{ e.exp_number }}</td>
+        <td>{{ e.expense_date.strftime('%b %d, %Y') if e.expense_date else '-' }}</td>
+        <td>{{ e.prop.name if e.prop else '-' }}</td>
+        <td>{{ e.category }}</td>
+        <td style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.description }}</td>
+        <td>{{ e.vendor or '-' }}</td>
+        <td style="font-weight:700">{{ fmt(e.amount) }}</td>
+        <td>
+          <span class="badge {% if e.status == 'paid' %}b-paid{% else %}b-pending{% endif %}"
+                style="font-size:10.5px">{{ e.status }}</span>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" style="text-align:center;color:var(--mt);padding:36px">No expenses recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Add Cost Estimate Modal -->
+<div class="modal-ov" id="addExpenseModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-title">Add Maintenance Cost Estimate</span>
+      <button class="modal-close" onclick="closeModal('addExpenseModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+      <form method="POST" action="{{ url_for('finance_expense_add') }}" enctype="multipart/form-data">
+        <div class="fg">
+          <label class="form-label">Property</label>
+          <select class="form-sel" name="property_id" required>
+            <option value="">— Select property —</option>
+            {% for p in all_properties %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="fg">
+            <label class="form-label">Category</label>
+            <select class="form-sel" name="category">
+              {% for c in expense_categories %}
+              <option>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Amount (₦)</label>
+            <input class="form-ctrl" type="number" name="amount" min="0" step="0.01" required/>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Description</label>
+          <input class="form-ctrl" name="description" required maxlength="300"/>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="fg">
+            <label class="form-label">Vendor / Artisan</label>
+            <input class="form-ctrl" name="vendor"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Date</label>
+            <input class="form-ctrl" type="date" name="expense_date" value="{{ today_str }}" required/>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Receipt (PDF / JPG / PNG, optional)</label>
+          <input class="form-ctrl" type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png"/>
+        </div>
+        <div class="df g8" style="margin-top:20px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                  onclick="closeModal('addExpenseModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+            <i class="bi bi-check2"></i> Save Estimate
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

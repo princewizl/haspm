@@ -1,0 +1,722 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block page_title %}Reports & Analytics{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('reports_export_csv', type=rtype, date_from=filters.date_from, date_to=filters.date_to, tenant_id=filters.tenant_id, property_id=filters.property_id, status=filters.status) }}"
+   class="btn-nv" style="text-decoration:none">
+  <i class="bi bi-download"></i> <span class="hide-mobile">Export CSV</span>
+</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .rpt-tabs { display:flex; gap:6px; flex-wrap:wrap; padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--bd); }
+  .rpt-tab  { background:none; border:1px solid var(--bd); border-radius:99px; padding:5px 14px; font-size:12.5px; font-weight:500; color:var(--mt); transition:all .2s; cursor:pointer; }
+  .rpt-tab:hover  { background:var(--nv-l); color:var(--nv); border-color:var(--nv); }
+  .rpt-tab.active { background:var(--nv); color:#fff; border-color:var(--nv); }
+
+  .rpt-kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
+  .rpt-kpi { background:var(--wh); border:1px solid var(--bd); border-radius:12px; padding:18px 20px; }
+  .rpt-kpi-val { font-size:20px; font-weight:700; color:var(--tx); }
+  .rpt-kpi-lbl { font-size:11.5px; color:var(--mt); margin-top:4px; }
+  .rpt-kpi.green .rpt-kpi-val { color:var(--gr); }
+  .rpt-kpi.red   .rpt-kpi-val { color:var(--rd); }
+  .rpt-kpi.amber .rpt-kpi-val { color:var(--wn); }
+
+  .rpt-totals { display:flex; gap:20px; flex-wrap:wrap; padding:12px 18px; background:var(--nv-l); border-radius:10px; margin-bottom:14px; font-size:13px; }
+  .rpt-tot-item { display:flex; flex-direction:column; }
+  .rpt-tot-lbl  { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--mt); font-weight:600; }
+  .rpt-tot-val  { font-weight:700; color:var(--tx); font-size:15px; margin-top:2px; }
+
+  .rpt-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .rpt-table th { background:var(--bg); color:var(--mt); font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; padding:9px 12px; text-align:left; border-bottom:2px solid var(--bd); white-space:nowrap; }
+  .rpt-table td { padding:10px 12px; border-bottom:1px solid var(--bg); vertical-align:middle; }
+  .rpt-table tbody tr:hover { background:#fafbfd; }
+  .rpt-table td.num { text-align:right; font-variant-numeric:tabular-nums; font-family:monospace; font-size:12.5px; }
+  .rpt-wrap { overflow-x:auto; }
+
+  .occ-bar-bg { background:var(--bg); border-radius:99px; height:8px; width:120px; overflow:hidden; }
+  .occ-bar-fill { height:100%; border-radius:99px; background:var(--gr); }
+
+  .cat-pill { display:inline-flex; align-items:center; gap:6px; background:var(--bg); border-radius:8px; padding:6px 10px; font-size:12px; }
+  .cat-pill strong { color:var(--tx); }
+
+  .empty-state { text-align:center; padding:60px 20px; color:var(--mt); }
+  .empty-state i { font-size:40px; display:block; margin-bottom:12px; opacity:.35; }
+
+  @media(max-width:768px){
+    .rpt-kpi-grid{ grid-template-columns:repeat(2,1fr); }
+    .filter-grid  { grid-template-columns:1fr 1fr !important; }
+  }
+  @media(max-width:480px){
+    .rpt-kpi-grid{ grid-template-columns:1fr; }
+    .filter-grid  { grid-template-columns:1fr !important; }
+  }
+</style>
+{% endblock %}
+
+{# ── status-opt helper: determines which status options to render #}
+{% if rtype == 'rent_ledger' %}
+  {% set status_label = 'Entry Type' %}
+  {% set status_opts  = [('','All Types'),('charge','Charge'),('credit','Credit'),('adjustment','Adjustment')] %}
+{% elif rtype == 'invoices' %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [('','All Statuses'),('pending','Pending'),('paid','Paid'),('overdue','Overdue')] %}
+{% elif rtype == 'payments' %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [('','All Statuses'),('pending','Pending'),('confirmed','Confirmed')] %}
+{% elif rtype == 'expenses' %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [('','All Statuses'),('paid','Paid'),('unpaid','Unpaid')] %}
+{% elif rtype == 'payouts' %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [('','All Statuses'),('pending','Pending'),('completed','Completed'),('rejected','Rejected')] %}
+{% elif rtype == 'bank_transfers' %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [('','All Statuses'),('pending','Pending'),('confirmed','Confirmed'),('rejected','Rejected')] %}
+{% else %}
+  {% set status_label = 'Status' %}
+  {% set status_opts  = [] %}
+{% endif %}
+
+{% block content %}
+
+{# ── Filter Card ─────────────────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:18px">
+  <div class="card-body" style="padding-bottom:14px">
+
+    <form id="filter-form" method="GET" action="{{ url_for('reports') }}">
+      <input type="hidden" name="type" id="rtype-input" value="{{ rtype }}">
+
+      {# Report type tabs — only types this role/department may access #}
+      {% set tab_meta = {
+        'summary':        ('grid-1x2',           'Summary'),
+        'rent_ledger':    ('journal-text',       'Rent Ledger'),
+        'invoices':       ('receipt',            'Invoices'),
+        'payments':       ('credit-card',        'Payments'),
+        'expenses':       ('bag',                'Expenses'),
+        'occupancy':      ('building',           'Occupancy'),
+        'arrears':        ('exclamation-circle', 'Arrears'),
+        'payouts':        ('cash-stack',         'Payouts'),
+        'bank_transfers': ('bank',               'Bank Transfers')
+      } %}
+      <div class="rpt-tabs">
+        {% for t in allowed_types %}
+        <button type="button" onclick="switchType('{{ t }}')"
+                class="rpt-tab {{ 'active' if rtype==t }}"><i class="bi bi-{{ tab_meta[t][0] }}"></i> {{ tab_meta[t][1] }}</button>
+        {% endfor %}
+      </div>
+
+      {# Filter fields #}
+      <div class="filter-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end">
+        <div class="fg" style="margin-bottom:0">
+          <label class="form-label">Date From</label>
+          <input type="date" class="form-ctrl" name="date_from" value="{{ filters.date_from }}">
+        </div>
+        <div class="fg" style="margin-bottom:0">
+          <label class="form-label">Date To</label>
+          <input type="date" class="form-ctrl" name="date_to" value="{{ filters.date_to }}">
+        </div>
+        <div class="fg" id="status-wrap" style="margin-bottom:0{% if not status_opts %};display:none{% endif %}">
+          <label class="form-label" id="status-label">{{ status_label }}</label>
+          <select class="form-ctrl" name="status" id="status-filter">
+            {% if status_opts %}
+              {% for v, l in status_opts %}
+              <option value="{{ v }}" {{ 'selected' if filters.status == v }}>{{ l }}</option>
+              {% endfor %}
+            {% endif %}
+          </select>
+        </div>
+        {% if role in ['Admin','Landlord'] %}
+        <div class="fg" style="margin-bottom:0">
+          <label class="form-label">Tenant</label>
+          <select class="form-ctrl" name="tenant_id">
+            <option value="">All Tenants</option>
+            {% for t in all_tenants %}
+            <option value="{{ t.id }}" {{ 'selected' if filters.tenant_id == t.id|string }}>{{ t.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if role in ['Admin','Landlord'] %}
+      <div class="filter-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end;margin-top:10px">
+        <div class="fg" style="margin-bottom:0">
+          <label class="form-label">Property</label>
+          <select class="form-ctrl" name="property_id">
+            <option value="">All Properties</option>
+            {% for p in all_properties %}
+            <option value="{{ p.id }}" {{ 'selected' if filters.property_id == p.id|string }}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div></div><div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center"><i class="bi bi-funnel"></i> Apply</button>
+          <a href="{{ url_for('reports', type=rtype) }}" class="btn-sm" style="border:1px solid var(--bd);background:var(--wh);color:var(--mt);padding:8px 14px;border-radius:8px;font-size:13px;text-decoration:none;white-space:nowrap">Clear</a>
+        </div>
+      </div>
+      {% else %}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button type="submit" class="btn-nv"><i class="bi bi-funnel"></i> Apply</button>
+        <a href="{{ url_for('reports', type=rtype) }}" style="border:1px solid var(--bd);background:var(--wh);color:var(--mt);padding:8px 14px;border-radius:8px;font-size:13px;text-decoration:none">Clear</a>
+      </div>
+      {% endif %}
+    </form>
+
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# SUMMARY                                                                   #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% if rtype == 'summary' %}
+
+<div class="rpt-kpi-grid">
+  <div class="rpt-kpi">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.total_invoiced) }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-receipt" style="color:var(--nv)"></i> Total Invoiced</div>
+  </div>
+  <div class="rpt-kpi green">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.total_paid) }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-check-circle" style="color:var(--gr)"></i> Total Collected</div>
+  </div>
+  <div class="rpt-kpi amber">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.total_pending) }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-hourglass-split" style="color:var(--wn)"></i> Pending</div>
+  </div>
+  <div class="rpt-kpi red">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.total_overdue) }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-exclamation-circle" style="color:var(--rd)"></i> Overdue</div>
+  </div>
+  <div class="rpt-kpi red">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.total_expenses) }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-bag" style="color:var(--rd)"></i> Total Expenses</div>
+  </div>
+  <div class="rpt-kpi {{ 'green' if kpis.net_income >= 0 else 'red' }}">
+    <div class="rpt-kpi-val">₦{{ "{:,.0f}".format(kpis.net_income | abs) }}{% if kpis.net_income < 0 %} <small style="font-size:13px">(loss)</small>{% endif %}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-graph-up-arrow"></i> Net Income</div>
+  </div>
+  {% if role != 'Tenant' %}
+  <div class="rpt-kpi">
+    <div class="rpt-kpi-val">{{ kpis.active_tenants }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-people" style="color:var(--nv)"></i> Active Tenants</div>
+  </div>
+  <div class="rpt-kpi">
+    <div class="rpt-kpi-val">{{ kpis.occupied_units }} / {{ kpis.total_units }}</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-house-door" style="color:var(--nv)"></i> Occupied Units</div>
+  </div>
+  <div class="rpt-kpi {{ 'green' if kpis.occupancy_pct >= 80 else ('amber' if kpis.occupancy_pct >= 50 else 'red') }}">
+    <div class="rpt-kpi-val">{{ kpis.occupancy_pct }}%</div>
+    <div class="rpt-kpi-lbl"><i class="bi bi-pie-chart"></i> Occupancy Rate</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Recent Invoices</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Invoice #</th><th>Date</th><th>Tenant</th><th>Type</th>
+          <th class="num">Amount (₦)</th><th>Due Date</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+        {% for inv in rows %}
+        <tr>
+          <td><span style="font-family:monospace;font-size:12px">{{ inv.inv_number }}</span></td>
+          <td style="color:var(--mt);font-size:12px">{{ inv.created_at.strftime('%d %b %Y') if inv.created_at else '-' }}</td>
+          <td>{{ inv.tenant.name if inv.tenant else '-' }}</td>
+          <td style="color:var(--mt)">{{ inv.type }}</td>
+          <td class="num">{{ "{:,.0f}".format(inv.amount) }}</td>
+          <td style="color:var(--mt);font-size:12px">{{ inv.due_date or '-' }}</td>
+          <td>
+            {% if inv.status == 'paid' %}<span class="badge b-confirmed">Paid</span>
+            {% elif inv.status == 'overdue' %}<span class="badge b-overdue">Overdue</span>
+            {% else %}<span class="badge" style="background:#FEF3C7;color:#92400E">Pending</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-receipt"></i>No invoices found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# RENT LEDGER                                                               #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'rent_ledger' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item">
+    <span class="rpt-tot-lbl">Records</span>
+    <span class="rpt-tot-val">{{ totals.count }}</span>
+  </div>
+  <div class="rpt-tot-item">
+    <span class="rpt-tot-lbl">Total Charges</span>
+    <span class="rpt-tot-val" style="color:var(--rd)">₦{{ "{:,.0f}".format(totals.charges) }}</span>
+  </div>
+  <div class="rpt-tot-item">
+    <span class="rpt-tot-lbl">Total Credits</span>
+    <span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.credits) }}</span>
+  </div>
+  <div class="rpt-tot-item">
+    <span class="rpt-tot-lbl">Adjustments</span>
+    <span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.adjustments) }}</span>
+  </div>
+  <div class="rpt-tot-item">
+    <span class="rpt-tot-lbl">Net Balance</span>
+    <span class="rpt-tot-val" style="color:{{ 'var(--rd)' if totals.net > 0 else 'var(--gr)' }}">₦{{ "{:,.0f}".format(totals.net | abs) }}</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Rent Ledger Entries</span><span class="badge b-confirmed">{{ totals.count }} records</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Date</th><th>Tenant</th><th>Unit</th><th>Property</th>
+          <th>Type</th><th class="num">Amount (₦)</th><th>Description</th><th>Reference</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ r.entry_date or '-' }}</td>
+          <td>{{ r.tenant.name if r.tenant else '-' }}</td>
+          <td style="color:var(--mt)">{{ r.unit.unit_number if r.unit else '-' }}</td>
+          <td style="color:var(--mt);font-size:12px">{{ r.prop.name if r.prop else '-' }}</td>
+          <td>
+            {% if r.entry_type == 'charge' %}<span class="badge b-overdue">Charge</span>
+            {% elif r.entry_type == 'credit' %}<span class="badge b-confirmed">Credit</span>
+            {% else %}<span class="badge" style="background:#EDE9FE;color:#5B21B6">Adjustment</span>{% endif %}
+          </td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.description or '-' }}</td>
+          <td style="font-family:monospace;font-size:12px;color:var(--mt)">{{ r.reference or '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-journal-text"></i>No ledger entries found for the selected filters.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# INVOICES                                                                  #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'invoices' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Invoices</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Value</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.total) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Paid</span><span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.paid) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Pending</span><span class="rpt-tot-val" style="color:var(--wn)">₦{{ "{:,.0f}".format(totals.pending) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Overdue</span><span class="rpt-tot-val" style="color:var(--rd)">₦{{ "{:,.0f}".format(totals.overdue) }}</span></div>
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Invoice Register</span><span class="badge b-confirmed">{{ totals.count }} invoices</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Invoice #</th><th>Date Issued</th><th>Tenant</th><th>Unit</th>
+          <th>Type</th><th class="num">Amount (₦)</th><th>Due Date</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><span style="font-family:monospace;font-size:12px">{{ r.inv_number }}</span></td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.created_at.strftime('%d %b %Y') if r.created_at else '-' }}</td>
+          <td>{{ r.tenant.name if r.tenant else '-' }}</td>
+          <td style="color:var(--mt)">{{ r.unit.unit_number if r.unit else '-' }}</td>
+          <td style="color:var(--mt);font-size:12px">{{ r.type }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td style="font-size:12px;{% if r.status == 'overdue' %}color:var(--rd);font-weight:600{% else %}color:var(--mt){% endif %}">{{ r.due_date or '-' }}</td>
+          <td>
+            {% if r.status == 'paid' %}<span class="badge b-confirmed">Paid</span>
+            {% elif r.status == 'overdue' %}<span class="badge b-overdue">Overdue</span>
+            {% else %}<span class="badge" style="background:#FEF3C7;color:#92400E">Pending</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-receipt"></i>No invoices match the selected filters.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# PAYMENTS                                                                  #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'payments' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Payments</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Amount</span><span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.total) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Via Paystack</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.paystack) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Bank Transfer</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.bank_transfer) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Other</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.other) }}</span></div>
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Payment Transactions</span><span class="badge b-confirmed">{{ totals.count }} transactions</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>TXN #</th><th>Date</th><th>Tenant</th><th>Invoice #</th>
+          <th class="num">Amount (₦)</th><th>Method</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><span style="font-family:monospace;font-size:12px">{{ r.txn_number }}</span></td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.date or '-' }}</td>
+          <td>{{ r.tenant.name if r.tenant else '-' }}</td>
+          <td style="font-family:monospace;font-size:12px;color:var(--mt)">{{ r.invoice.inv_number if r.invoice else '-' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td>
+            {% if r.method == 'paystack' %}<span class="badge" style="background:#E0F7FA;color:#006064">Paystack</span>
+            {% elif r.method == 'bank_transfer' %}<span class="badge" style="background:#E8F5E9;color:#1B5E20">Bank Transfer</span>
+            {% else %}<span class="badge" style="background:var(--bg);color:var(--mt)">{{ r.method | title }}</span>{% endif %}
+          </td>
+          <td>
+            {% if r.status == 'confirmed' %}<span class="badge b-confirmed">Confirmed</span>
+            {% else %}<span class="badge" style="background:#FEF3C7;color:#92400E">Pending</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-credit-card"></i>No payment transactions found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# EXPENSES                                                                  #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'expenses' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Expenses</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Amount</span><span class="rpt-tot-val" style="color:var(--rd)">₦{{ "{:,.0f}".format(totals.total) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Paid</span><span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.paid) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Unpaid</span><span class="rpt-tot-val" style="color:var(--wn)">₦{{ "{:,.0f}".format(totals.unpaid) }}</span></div>
+</div>
+
+{% if totals.by_category %}
+<div class="card" style="margin-bottom:14px">
+  <div class="card-hdr"><span class="card-title">Breakdown by Category</span></div>
+  <div class="card-body" style="display:flex;flex-wrap:wrap;gap:8px">
+    {% for cat, amt in totals.by_category %}
+    <div class="cat-pill"><i class="bi bi-tag" style="color:var(--mt)"></i> {{ cat }} <strong>₦{{ "{:,.0f}".format(amt) }}</strong></div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Expense Register</span><span class="badge b-overdue">{{ totals.count }} records</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Exp #</th><th>Date</th><th>Property</th><th>Unit</th>
+          <th>Category</th><th>Description</th><th class="num">Amount (₦)</th><th>Vendor</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><span style="font-family:monospace;font-size:12px">{{ r.exp_number }}</span></td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.expense_date or '-' }}</td>
+          <td>{{ r.prop.name if r.prop else '-' }}</td>
+          <td style="color:var(--mt)">{{ r.unit.unit_number if r.unit else '-' }}</td>
+          <td><span class="badge" style="background:var(--bg);color:var(--tx)">{{ r.category }}</span></td>
+          <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.description or '-' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td style="color:var(--mt);font-size:12px">{{ r.vendor or '-' }}</td>
+          <td>
+            {% if r.status == 'paid' %}<span class="badge b-confirmed">Paid</span>
+            {% else %}<span class="badge b-overdue">Unpaid</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-bag"></i>No expenses found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# OCCUPANCY                                                                 #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'occupancy' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Properties</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Units</span><span class="rpt-tot-val">{{ totals.total_units }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Occupied</span><span class="rpt-tot-val" style="color:var(--gr)">{{ totals.occupied }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Vacant</span><span class="rpt-tot-val" style="color:var(--wn)">{{ totals.vacant }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Overall Occupancy</span><span class="rpt-tot-val">{{ totals.overall_pct }}%</span></div>
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Occupancy by Property</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Property</th><th>Type</th><th>Address</th>
+          <th class="num">Total Units</th><th class="num">Occupied</th><th class="num">Vacant</th>
+          <th>Occupancy</th><th class="num">Avg Rent (₦)</th>
+        </tr></thead>
+        <tbody>
+        {% for p in rows %}
+        {% set occ_pct = p.occupancy_pct %}
+        <tr>
+          <td><strong>{{ p.name }}</strong></td>
+          <td style="color:var(--mt);font-size:12px">{{ p.type }}</td>
+          <td style="font-size:12px;color:var(--mt);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.address }}</td>
+          <td class="num">{{ p.total_units }}</td>
+          <td class="num" style="color:var(--gr);font-weight:600">{{ p.occupied_units }}</td>
+          <td class="num" style="color:{{ 'var(--rd)' if p.vacant_units > 0 else 'var(--mt)' }}">{{ p.vacant_units }}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="occ-bar-bg">
+                <div class="occ-bar-fill" style="width:{{ occ_pct }}%;background:{{ 'var(--gr)' if occ_pct >= 80 else ('var(--wn)' if occ_pct >= 50 else 'var(--rd)') }}"></div>
+              </div>
+              <span style="font-size:12px;font-weight:600;color:{{ 'var(--gr)' if occ_pct >= 80 else ('var(--wn)' if occ_pct >= 50 else 'var(--rd)') }}">{{ occ_pct }}%</span>
+            </div>
+          </td>
+          <td class="num">{{ "{:,.0f}".format(p.avg_rent) if p.avg_rent else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-building"></i>No properties found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# ARREARS                                                                   #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'arrears' %}
+
+{% if rows %}
+<div style="background:#FFF5F5;border:1px solid #FED7D7;border-radius:10px;padding:14px 18px;margin-bottom:16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap">
+  <i class="bi bi-exclamation-triangle-fill" style="color:var(--rd);font-size:22px;flex-shrink:0"></i>
+  <div style="flex:1">
+    <div style="font-weight:600;color:var(--rd)">{{ totals.tenant_count }} tenant{{ 's' if totals.tenant_count != 1 }} in arrears</div>
+    <div style="font-size:12.5px;color:var(--mt);margin-top:2px">{{ totals.invoice_count }} overdue invoice{{ 's' if totals.invoice_count != 1 }} totalling <strong style="color:var(--rd)">₦{{ "{:,.0f}".format(totals.total_owed) }}</strong></div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Arrears Register</span>{% if rows %}<span class="badge b-overdue">{{ totals.tenant_count }} tenants</span>{% endif %}</div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Tenant</th><th>Unit</th><th>Contact</th>
+          <th class="num">Invoices</th><th class="num">Total Owed (₦)</th>
+          <th>Oldest Due</th><th>Days Overdue</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        {% set days_over = (today - r.oldest_due).days if r.oldest_due else 0 %}
+        <tr>
+          <td><strong>{{ r.tenant.name }}</strong></td>
+          <td style="color:var(--mt)">{{ r.unit.unit_number if r.unit else '-' }}</td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.tenant.email }}</td>
+          <td class="num">{{ r.invoices | length }}</td>
+          <td class="num" style="color:var(--rd);font-weight:700">{{ "{:,.0f}".format(r.total) }}</td>
+          <td style="color:var(--rd);font-size:12px;font-weight:600">{{ r.oldest_due or '-' }}</td>
+          <td>
+            <span style="background:{% if days_over > 60 %}#FEE2E2;color:#991B1B{% elif days_over > 30 %}#FEF3C7;color:#92400E{% else %}#FEE2E2;color:#991B1B{% endif %};border-radius:99px;padding:2px 9px;font-size:11.5px;font-weight:600">
+              {{ days_over }} days
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-check-circle" style="color:var(--gr);opacity:1"></i>
+      <div style="color:var(--gr);font-weight:600">No arrears!</div>
+      <div style="font-size:13px;margin-top:4px">All tenants are up to date.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# PAYOUTS                                                                   #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'payouts' %}
+
+{% if totals %}
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Payouts</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Amount</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.total) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Completed</span><span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.completed) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Pending</span><span class="rpt-tot-val" style="color:var(--wn)">₦{{ "{:,.0f}".format(totals.pending) }}</span></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Landlord Payouts</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Payout #</th><th>Landlord</th><th class="num">Amount (₦)</th>
+          <th>Status</th><th>Requested</th><th>Completed</th><th>Notes</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><span style="font-family:monospace;font-size:12px">{{ r.payout_number }}</span></td>
+          <td>{{ r.landlord.name if r.landlord else '-' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td>
+            {% if r.status == 'completed' %}<span class="badge b-confirmed">Completed</span>
+            {% elif r.status == 'rejected' %}<span class="badge b-overdue">Rejected</span>
+            {% else %}<span class="badge" style="background:#FEF3C7;color:#92400E">Pending</span>{% endif %}
+          </td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.requested_at.strftime('%d %b %Y') if r.requested_at else '-' }}</td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.completed_at.strftime('%d %b %Y') if r.completed_at else '-' }}</td>
+          <td style="font-size:12px;color:var(--mt);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.notes or '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-cash-stack"></i>No payout records found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ════════════════════════════════════════════════════════════════════════ #}
+{# BANK TRANSFERS                                                             #}
+{# ════════════════════════════════════════════════════════════════════════ #}
+{% elif rtype == 'bank_transfers' %}
+
+<div class="rpt-totals">
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Claims</span><span class="rpt-tot-val">{{ totals.count }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Total Amount</span><span class="rpt-tot-val">₦{{ "{:,.0f}".format(totals.total) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Confirmed</span><span class="rpt-tot-val" style="color:var(--gr)">₦{{ "{:,.0f}".format(totals.confirmed) }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Pending Review</span><span class="rpt-tot-val" style="color:var(--wn)">{{ totals.pending }}</span></div>
+  <div class="rpt-tot-item"><span class="rpt-tot-lbl">Rejected</span><span class="rpt-tot-val" style="color:var(--rd)">{{ totals.rejected }}</span></div>
+</div>
+
+<div class="card">
+  <div class="card-hdr"><span class="card-title">Bank Transfer Claims</span><span class="badge" style="background:var(--bg);color:var(--mt)">{{ totals.count }} claims</span></div>
+  <div class="card-body" style="padding:0">
+    {% if rows %}
+    <div class="rpt-wrap">
+      <table class="rpt-table">
+        <thead><tr>
+          <th>Submitted</th><th>Tenant</th><th>Invoice #</th>
+          <th class="num">Amount (₦)</th><th>Bank Ref</th><th>Transfer Date</th>
+          <th>Status</th><th>Reviewed</th>
+        </tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="font-size:12px;color:var(--mt)">{{ r.submitted_at.strftime('%d %b %Y') if r.submitted_at else '-' }}</td>
+          <td>{{ r.tenant.name if r.tenant else '-' }}</td>
+          <td style="font-family:monospace;font-size:12px;color:var(--mt)">{{ r.invoice.inv_number if r.invoice else '-' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount) }}</td>
+          <td style="font-family:monospace;font-size:12px">{{ r.bank_ref or '-' }}</td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.transfer_date or '-' }}</td>
+          <td>
+            {% if r.status == 'confirmed' %}<span class="badge b-confirmed">Confirmed</span>
+            {% elif r.status == 'rejected' %}<span class="badge b-overdue">Rejected</span>
+            {% else %}<span class="badge" style="background:#FEF3C7;color:#92400E">Pending</span>{% endif %}
+          </td>
+          <td style="font-size:12px;color:var(--mt)">{{ r.reviewed_at.strftime('%d %b %Y') if r.reviewed_at else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state"><i class="bi bi-bank"></i>No bank transfer claims found.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endif %}
+
+<script>
+const STATUS_OPTS = {
+  summary:        null,
+  rent_ledger:    [['','All Types'],['charge','Charge'],['credit','Credit'],['adjustment','Adjustment']],
+  invoices:       [['','All Statuses'],['pending','Pending'],['paid','Paid'],['overdue','Overdue']],
+  payments:       [['','All Statuses'],['pending','Pending'],['confirmed','Confirmed']],
+  expenses:       [['','All Statuses'],['paid','Paid'],['unpaid','Unpaid']],
+  occupancy:      null,
+  arrears:        null,
+  payouts:        [['','All Statuses'],['pending','Pending'],['completed','Completed'],['rejected','Rejected']],
+  bank_transfers: [['','All Statuses'],['pending','Pending'],['confirmed','Confirmed'],['rejected','Rejected']],
+};
+const STATUS_LABELS = {
+  rent_ledger: 'Entry Type',
+};
+
+function switchType(t) {
+  document.getElementById('rtype-input').value = t;
+
+  const sel  = document.getElementById('status-filter');
+  const wrap = document.getElementById('status-wrap');
+  const lbl  = document.getElementById('status-label');
+  const opts = STATUS_OPTS[t];
+
+  if (opts) {
+    wrap.style.display = '';
+    sel.innerHTML = opts.map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+    if (lbl) lbl.textContent = STATUS_LABELS[t] || 'Status';
+  } else {
+    wrap.style.display = 'none';
+    sel.value = '';
+  }
+
+  document.getElementById('filter-form').submit();
+}
+</script>
+{% endblock %}

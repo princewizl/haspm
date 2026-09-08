@@ -1,0 +1,763 @@
+{% extends "base.html" %}
+{% block title %}Properties{% endblock %}
+{% block page_title %}Properties & Units{% endblock %}
+
+{% block topbar_actions %}
+<div class="df g8 aic" style="margin-right: 16px;">
+  <button class="btn-ghost sm active" id="btn-grid" onclick="setView('grid')" style="padding: 6px 10px;">
+    <i class="bi bi-grid-fill"></i>
+  </button>
+  <button class="btn-ghost sm" id="btn-list" onclick="setView('list')" style="padding: 6px 10px;">
+    <i class="bi bi-list-ul"></i>
+  </button>
+  <button class="btn-ghost sm" id="btn-table" onclick="setView('table')" style="padding: 6px 10px;">
+    <i class="bi bi-table"></i>
+  </button>
+</div>
+
+<button class="btn-cr" onclick="openModal('addPropModal')">
+  <i class="bi bi-plus-lg"></i> <span class="hide-mobile">Add Property</span>
+</button>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ─── Grid Layouts ─── */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .prop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px; }
+
+  /* ─── Property Card ─── */
+  .prop-card {
+    background: var(--wh);
+    border: 1px solid var(--bd);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform .22s ease, box-shadow .22s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .prop-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(0,0,0,.1);
+  }
+
+  /* ─── Property Image Banner ─── */
+  .prop-img-wrap {
+    position: relative;
+    height: 190px;
+    overflow: hidden;
+    background: #e5e7eb;
+    flex-shrink: 0;
+  }
+  .prop-img-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform .4s ease;
+  }
+  .prop-card:hover .prop-img-wrap img {
+    transform: scale(1.04);
+  }
+  /* Gradient overlay for readability */
+  .prop-img-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(0,0,0,0) 40%, rgba(0,0,0,.55) 100%);
+    pointer-events: none; /* Let clicks pass through */
+  }
+  /* Placeholder when no image */
+  .prop-img-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #9ca3af;
+    font-size: 13px;
+  }
+  .prop-img-placeholder i { font-size: 36px; opacity: .45; }
+
+  /* Badges floating on the image */
+  .prop-badge-type {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,.3);
+  }
+  .prop-badge-occ {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 10.5px;
+    font-weight: 700;
+    backdrop-filter: blur(8px);
+  }
+  .prop-badge-type, .prop-badge-occ { pointer-events: none; }
+
+  /* Type badge colours */
+  .badge-Commercial  { background: rgba(13,58,107,.75);  color: #bfdbfe; }
+  .badge-Residential { background: rgba(16,185,129,.75); color: #d1fae5; }
+  .badge-Mixed-Use   { background: rgba(245,158,11,.75); color: #fef3c7; }
+
+  /* ─── Card Body ─── */
+  .prop-body { padding: 18px 18px 14px; flex: 1; display: flex; flex-direction: column; }
+  .prop-name { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 16px; color: var(--tx); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prop-addr { font-size: 12px; color: var(--mt); display: flex; align-items: flex-start; gap: 5px; margin-bottom: 14px; line-height: 1.45; }
+  .prop-addr span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .prop-desc { font-size: 12.5px; color: var(--mt); line-height: 1.6; margin-bottom: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* Stat row */
+  .prop-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .prop-stat-box { background: var(--bg); border-radius: 9px; padding: 10px 4px; text-align: center; }
+  .prop-stat-box .sv { font-family: 'Syne', sans-serif; font-weight: 600; font-size: 18px; line-height: 1; }
+  .prop-stat-box .sl { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--mt); margin-top: 4px; }
+
+  /* Progress bar */
+  .pb-wrap { height: 6px; background: var(--bg); border-radius: 99px; overflow: hidden; }
+  .pb-fill  { height: 100%; border-radius: 99px; transition: width .6s ease; }
+
+  /* Card footer */
+  .prop-foot { padding: 12px 18px; border-top: 1px solid var(--bd); display: flex; align-items: center; justify-content: space-between; }
+
+  /* ─── Pure Data Table View ─── */
+  .prop-table-wrap {
+    background: var(--wh);
+    border: 1px solid var(--bd);
+    border-radius: 16px;
+    overflow: hidden;
+    width: 100%;
+  }
+  .prop-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 13.5px;
+  }
+  .prop-table th {
+    background: var(--bg);
+    padding: 14px 18px;
+    font-weight: 700;
+    color: var(--mt);
+    border-bottom: 1px solid var(--bd);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+  .prop-table td {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--bd);
+    color: var(--tx);
+    vertical-align: middle;
+  }
+  .prop-table tr:last-child td { border-bottom: none; }
+  .prop-table tr:hover { background: rgba(0, 0, 0, 0.01); }
+
+  /* ─── Image Upload in Modal ─── */
+  .img-upload-area {
+    border: 2px dashed var(--bd);
+    border-radius: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    background: var(--bg);
+    position: relative;
+  }
+  .img-upload-area:hover, .img-upload-area.drag { border-color: var(--cr); background: rgba(201,24,74,.04); }
+  .img-upload-area input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .img-preview { width: 100%; height: 140px; object-fit: cover; border-radius: 8px; margin-top: 10px; display: none; }
+  .img-preview.show { display: block; }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 768px) {
+    .prop-grid { grid-template-columns: 1fr; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  }
+  @media (max-width: 480px) {
+    .stat-grid { grid-template-columns: 1fr; }
+    .hide-mobile { display: none; }
+    .prop-img-wrap { height: 160px; }
+  }
+  
+  .prop-carousel {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    height: 100%;
+    cursor: pointer;
+  }
+  .prop-carousel::-webkit-scrollbar { height: 6px; }
+  .prop-carousel::-webkit-scrollbar-track { background: transparent; }
+  .prop-carousel::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.25); border-radius: 10px; }
+  
+  .prop-carousel img {
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    scroll-snap-align: start;
+    display: block;
+    transition: transform .4s ease;
+  }
+  
+  .carousel-indicators {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 4px;
+    z-index: 2;
+  }
+  .carousel-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.5);
+  }
+  .carousel-dot.active { background: #fff; }
+
+  /* ─── List View Layout Toggle ─── */
+  .prop-grid.view-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .prop-grid.view-list .prop-card {
+    flex-direction: row;
+    height: 190px;
+  }
+  .prop-grid.view-list .prop-img-wrap {
+    width: 260px;
+    height: 100%;
+  }
+  .prop-grid.view-list .prop-body {
+    flex: 1;
+    justify-content: center;
+  }
+  .prop-grid.view-list .prop-foot {
+    border-top: none;
+    border-left: 1px solid var(--bd);
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-end;
+    width: 220px;
+    gap: 12px;
+  }
+  
+  @media (max-width: 768px) {
+    .prop-grid.view-list .prop-card {
+      flex-direction: column;
+      height: auto;
+    }
+    .prop-grid.view-list .prop-img-wrap {
+      width: 100%;
+      height: 190px;
+    }
+    .prop-grid.view-list .prop-foot {
+      border-left: none;
+      border-top: 1px solid var(--bd);
+      flex-direction: row;
+      width: 100%;
+      align-items: center;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="stat-grid">
+  {% set tu = properties | sum(attribute='total_units') %}
+  {% set to = properties | sum(attribute='occupied_units') %}
+  {% for lbl, val, ic, col in [
+      ('Total Properties', properties|length,   'buildings',    'nv'),
+      ('Total Units',      tu,                  'grid-3x3-gap',  'cr'),
+      ('Occupied',         to,                  'person-check',  'gr'),
+      ('Vacant',           tu - to,             'door-open',     'wn')
+  ] %}
+  <div class="stat-card" style="padding:16px 18px">
+    <div>
+      <div class="sl">{{ lbl }}</div>
+      <div class="sv" style="font-size:22px">{{ val }}</div>
+    </div>
+    <div class="sic" style="background:rgba(
+      {% if col=='nv' %}13,58,107
+      {% elif col=='cr' %}201,24,74
+      {% elif col=='gr' %}16,185,129
+      {% else %}245,158,11{% endif %},.1)">
+      <i class="bi bi-{{ ic }}" style="font-size:20px;color:var(--{{ col }})"></i>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if properties %}
+
+<div class="prop-grid" id="propertiesContainer">
+{% for p in properties %}
+  {% set pct = p.occupancy_pct %}
+  {% set col = ['cr','nv','wn','gr'][loop.index0 % 4] %}
+
+  <div class="prop-card">
+    <div class="prop-img-wrap">
+      {% if p.images %}
+        {% set img_urls = p.images | map(attribute='image_url') | join(',') %}
+        <div class="prop-carousel" onclick="openGallery('{{ img_urls }}')">
+          {% for img in p.images %}
+            <img src="{{ img.image_url }}" alt="{{ p.name }} - Image {{ loop.index }}" loading="lazy"/>
+          {% endfor %}
+        </div>
+        
+        {% if p.images|length > 1 %}
+        <div class="carousel-indicators">
+          {% for img in p.images %}
+            <div class="carousel-dot {% if loop.first %}active{% endif %}"></div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="prop-img-overlay"></div>
+      {% else %}
+        <div class="prop-img-placeholder">
+          <i class="bi bi-building"></i>
+          <span>No photo yet</span>
+        </div>
+      {% endif %}
+
+      <span class="prop-badge-type badge-{{ p.type }}">{{ p.type }}</span>
+      <span class="prop-badge-occ" style="background:rgba({% if pct==100 %}16,185,129{% elif pct<60 %}201,24,74{% else %}13,58,107{% endif %},.75); color:#fff;">
+        {{ pct }}% full
+      </span>
+    </div>
+
+    <div class="prop-body">
+      <div class="prop-name">{{ p.name }}</div>
+      <div class="prop-addr">
+        <i class="bi bi-geo-alt" style="margin-top:2px;flex-shrink:0"></i>
+        <span>{{ p.address }}</span>
+      </div>
+      {% if p.landlord %}
+      <div class="prop-addr">
+        <i class="bi bi-person" style="margin-top:2px;flex-shrink:0"></i>
+        <span>Landlord: <a href="{{ url_for('user_profile', user_id=p.landlord.id) }}" style="color:var(--nv);font-weight:500">{{ p.landlord.name }}</a></span>
+      </div>
+      {% endif %}
+      {% set prop_tenants = tenants_by_prop[p.id] %}
+      {% if prop_tenants %}
+      <div class="prop-addr" style="align-items:flex-start">
+        <i class="bi bi-people" style="margin-top:2px;flex-shrink:0"></i>
+        <span>Tenants:
+          {% for t in prop_tenants %}<a href="{{ url_for('user_profile', user_id=t.id) }}" style="color:var(--nv);font-weight:500">{{ t.name }}</a>{{ ", " if not loop.last }}{% endfor %}
+        </span>
+      </div>
+      {% endif %}
+      {% if p.description %}
+      <div class="prop-desc">{{ p.description }}</div>
+      {% endif %}
+
+      <div class="prop-stats">
+        {% for l, v in [('Units', p.total_units), ('Occupied', p.occupied_units), ('Vacant', p.vacant_units)] %}
+        <div class="prop-stat-box">
+          <div class="sv" style="color:var(--{{ col }})">{{ v }}</div>
+          <div class="sl">{{ l }}</div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div style="margin-bottom:4px">
+        <div class="df aic" style="justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:var(--mt)">Occupancy</span>
+          <span style="font-size:12px;font-weight:700;color:
+            {% if pct==100 %}var(--gr){% elif pct<60 %}var(--cr){% else %}var(--nv){% endif %}">{{ pct }}%</span>
+        </div>
+        <div class="pb-wrap">
+          <div class="pb-fill" style="width:{{ pct }}%;background:
+            {% if pct==100 %}var(--gr){% elif pct<60 %}var(--cr){% else %}var(--nv){% endif %}"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="prop-foot">
+      <span style="font-size:13px;color:var(--mt)">
+        Avg Rent: <strong style="color:var(--tx)">{{ fmt(p.avg_rent) }}</strong>
+      </span>
+      <div class="df g8">
+        <button class="btn-ghost sm" onclick="openModal('units{{ p.id }}')">
+          <i class="bi bi-people"></i> Tenants
+        </button>
+        <button class="btn-ghost sm" onclick="openModal('editPropModal{{ p.id }}')">
+          <i class="bi bi-pencil"></i>
+        </button>
+        {% if role == 'Admin' %}
+        <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirm('Delete {{ p.name }}?')">
+          <button type="submit" class="btn-ghost sm" style="color:var(--cr)">
+            <i class="bi bi-trash"></i>
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+
+<div class="prop-table-wrap" id="propertiesTableContainer" style="display: none;">
+  <table class="prop-table">
+    <thead>
+      <tr>
+        <th>Property Name</th>
+        <th>Type</th>
+        <th>Address</th>
+        <th>Landlord</th>
+        <th>Tenants</th>
+        <th>Total Units</th>
+        <th>Occupied</th>
+        <th>Vacant</th>
+        <th>Avg Rent</th>
+        <th style="text-align: right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in properties %}
+      <tr>
+        <td style="font-weight: 700;">{{ p.name }}</td>
+        <td><span class="badge badge-{{ p.type }}" style="padding: 4px 8px; border-radius: 4px; font-size: 11px;">{{ p.type }}</span></td>
+        <td style="max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ p.address }}</td>
+        <td>{% if p.landlord %}<a href="{{ url_for('user_profile', user_id=p.landlord.id) }}" style="color:var(--nv)">{{ p.landlord.name }}</a>{% else %}<span style="color:var(--mt)">—</span>{% endif %}</td>
+        <td style="max-width:200px">
+          {% set prop_tenants = tenants_by_prop[p.id] %}
+          {% if prop_tenants %}
+            {% for t in prop_tenants %}<a href="{{ url_for('user_profile', user_id=t.id) }}" style="color:var(--nv);font-size:12.5px;white-space:nowrap">{{ t.name }}</a>{{ ", " if not loop.last }}{% endfor %}
+          {% else %}<span style="color:var(--mt)">—</span>{% endif %}
+        </td>
+        <td>{{ p.total_units }}</td>
+        <td style="color: var(--gr); font-weight: 600;">{{ p.occupied_units }}</td>
+        <td style="color: var(--wn); font-weight: 600;">{{ p.vacant_units }}</td>
+        <td style="font-weight: 600;">{{ fmt(p.avg_rent) }}</td>
+        <td>
+          <div class="df g8 jce">
+            <button class="btn-ghost sm" onclick="openModal('units{{ p.id }}')" title="View Tenants">
+              <i class="bi bi-people"></i>
+            </button>
+            <button class="btn-ghost sm" onclick="openModal('editPropModal{{ p.id }}')" title="Edit Details">
+              <i class="bi bi-pencil"></i>
+            </button>
+            {% if role == 'Admin' %}
+            <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirm('Delete {{ p.name }}?')">
+              <button type="submit" class="btn-ghost sm" style="color:var(--cr)" title="Delete">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% for p in properties %}
+  <div class="modal-ov" id="units{{ p.id }}">
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <span class="modal-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:10px">
+          {{ p.name }} — Tenants
+        </span>
+        <button class="modal-close" onclick="closeModal('units{{ p.id }}')">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto">
+        {% set pt = tenants_by_prop[p.id] %}
+        {% if pt %}
+          {% for t in pt %}
+          <div class="df aic" style="justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bg)">
+            <div class="df aic g8" style="min-width:0">
+              <div class="av nv" style="width:36px;height:36px;flex-shrink:0">{{ t.name[0] }}</div>
+              <div style="min-width:0">
+                <a href="{{ url_for('user_profile', user_id=t.id) }}" class="fw6"
+                   style="font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--nv);text-decoration:none;display:block">{{ t.name }}</a>
+                <div style="font-size:11.5px;color:var(--mt)">Unit {{ t.unit }} · Due {{ t.due }}</div>
+              </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0;margin-left:12px">
+              <div class="fw7" style="font-size:13px">{{ fmt(t.rent) }}</div>
+              <span class="badge b-{{ t.status }}" style="font-size:10px;margin-top:2px">{{ t.status }}</span>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div style="color:var(--mt);text-align:center;padding:36px 0">
+            <i class="bi bi-people" style="font-size:28px;opacity:.4;display:block;margin-bottom:10px"></i>
+            No active tenants in this property.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-ov" id="editPropModal{{ p.id }}">
+    <div class="modal-box" style="max-width:500px">
+      <div class="modal-hdr">
+        <span class="modal-title">Edit Property: {{ p.name }}</span>
+        <button class="modal-close" onclick="closeModal('editPropModal{{ p.id }}')">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+        <form method="POST" action="{{ url_for('edit_property', prop_id=p.id) }}" enctype="multipart/form-data">
+          
+          <div class="fg">
+            <label class="form-label">Property Name</label>
+            <input class="form-ctrl" name="name" value="{{ p.name }}" required/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Address</label>
+            <input class="form-ctrl" name="address" value="{{ p.address }}"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Description</label>
+            <textarea class="form-ctrl" name="description" rows="3" style="resize:vertical">{% if p.description %}{{ p.description }}{% endif %}</textarea>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="fg">
+              <label class="form-label">Property Type</label>
+              <select class="form-sel" name="type">
+                <option {% if p.type == 'Residential' %}selected{% endif %}>Residential</option>
+                <option {% if p.type == 'Commercial' %}selected{% endif %}>Commercial</option>
+                <option {% if p.type == 'Mixed-Use' %}selected{% endif %}>Mixed-Use</option>
+              </select>
+            </div>
+            <div class="fg">
+              <label class="form-label">Number of Units</label>
+              <input class="form-ctrl" type="number" name="units" value="{{ p.total_units }}" min="0"/>
+            </div>
+          </div>
+          <div class="fg">
+            <label class="form-label">Average / Unit Rent (₦)</label>
+            <input class="form-ctrl" type="number" name="unit_rent" value="{{ p.avg_rent }}" min="0"/>
+          </div>
+
+          <div class="df g8" style="margin-top:24px">
+            <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('editPropModal{{ p.id }}')">Cancel</button>
+            <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+              <i class="bi bi-check2"></i> Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
+{% else %}
+<div style="text-align:center;padding:80px 20px;color:var(--mt)">
+  <i class="bi bi-buildings" style="font-size:52px;opacity:.3;display:block;margin-bottom:16px"></i>
+  <div style="font-size:16px;font-weight:600;margin-bottom:8px">No properties yet</div>
+  <div style="font-size:14px;margin-bottom:24px">Click "Add Property" to get started.</div>
+  <button class="btn-cr" onclick="openModal('addPropModal')">
+    <i class="bi bi-plus-lg"></i> Add Property
+  </button>
+</div>
+{% endif %}
+
+<div class="modal-ov" id="galleryModal" style="z-index: 9999; background: rgba(0,0,0,0.92);">
+  <button class="modal-close" onclick="closeModal('galleryModal')" style="color: #fff; top: 20px; right: 24px; font-size: 36px; z-index: 10000;">&times;</button>
+  <div style="display: flex; align-items: center; justify-content: center; height: 100%; width: 100%; padding: 20px; position: relative;">
+    <button onclick="prevGalleryImage(event)" style="position: absolute; left: 20px; background: transparent; border: none; color: white; font-size: 40px; cursor: pointer; padding: 20px;">
+      <i class="bi bi-chevron-left"></i>
+    </button>
+    <img id="galleryMainImg" src="" style="max-height: 85vh; max-width: 85vw; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);" />
+    <button onclick="nextGalleryImage(event)" style="position: absolute; right: 20px; background: transparent; border: none; color: white; font-size: 40px; cursor: pointer; padding: 20px;">
+      <i class="bi bi-chevron-right"></i>
+    </button>
+  </div>
+</div>
+
+<div class="modal-ov" id="addPropModal">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hdr">
+      <span class="modal-title">Add New Property</span>
+      <button class="modal-close" onclick="closeModal('addPropModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+      <form method="POST" action="{{ url_for('add_property') }}" enctype="multipart/form-data" id="addPropForm">
+        <div class="fg" style="margin-bottom:18px">
+          <label class="form-label">Property Photos (Select Multiple)</label>
+          <div class="img-upload-area" id="uploadArea">
+            <input type="file" name="images" id="imgInput" accept="image/*" multiple onchange="previewImg(this)"/>
+            <i class="bi bi-images" style="font-size:28px;color:var(--mt);display:block;margin-bottom:6px"></i>
+            <div style="font-size:13px;color:var(--mt)">Drag & drop or <span style="color:var(--cr);font-weight:600">browse</span></div>
+            <div style="font-size:11px;color:var(--mt);margin-top:4px">Hold Ctrl/Cmd to select multiple.</div>
+          </div>
+          <div id="imgPreviewContainer" class="df g8" style="margin-top:10px; overflow-x:auto;"></div>
+          <div style="margin-top:10px">
+            <label class="form-label" style="font-size:11px">Or paste image URLs (comma separated)</label>
+            <input class="form-ctrl" name="image_urls" placeholder="https://url1, https://url2..." style="font-size:13px"/>
+          </div>
+        </div>
+
+        <div class="fg">
+          <label class="form-label">Property Name</label>
+          <input class="form-ctrl" name="name" placeholder="e.g. Sunset Towers" required/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Address</label>
+          <input class="form-ctrl" name="address" placeholder="Street, City, State"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Description</label>
+          <textarea class="form-ctrl" name="description" rows="3" placeholder="Brief description of the property…" style="resize:vertical"></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="fg">
+            <label class="form-label">Property Type</label>
+            <select class="form-sel" name="type">
+              <option>Residential</option>
+              <option>Commercial</option>
+              <option>Mixed-Use</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">Number of Units</label>
+            <input class="form-ctrl" type="number" name="units" placeholder="0" min="0"/>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="form-label">Average / Unit Rent (₦)</label>
+          <input class="form-ctrl" type="number" name="unit_rent" placeholder="e.g. 350000" min="0"/>
+        </div>
+
+        <div class="df g8" style="margin-top:24px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('addPropModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+            <i class="bi bi-check2"></i> Save Property
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function setView(mode) {
+  const container = document.getElementById('propertiesContainer');
+  const tableContainer = document.getElementById('propertiesTableContainer');
+  const btnGrid = document.getElementById('btn-grid');
+  const btnList = document.getElementById('btn-list');
+  const btnTable = document.getElementById('btn-table');
+  
+  if (!container || !tableContainer) return;
+
+  // Reset standard active button highlights
+  btnGrid.classList.remove('active');
+  btnList.classList.remove('active');
+  btnTable.classList.remove('active');
+
+  if (mode === 'table') {
+    container.style.display = 'none';
+    tableContainer.style.display = 'block';
+    btnTable.classList.add('active');
+  } else {
+    container.style.display = '';
+    tableContainer.style.display = 'none';
+    
+    if (mode === 'list') {
+      container.classList.add('view-list');
+      btnList.classList.add('active');
+    } else {
+      container.classList.remove('view-list');
+      btnGrid.classList.add('active');
+    }
+  }
+  localStorage.setItem('property_view_pref', mode);
+}
+
+// Load saved preference on page load
+document.addEventListener("DOMContentLoaded", () => {
+  const savedView = localStorage.getItem('property_view_pref') || 'grid';
+  setView(savedView);
+});
+
+/* Multi-Image file preview */
+function previewImg(input) {
+  const container = document.getElementById('imgPreviewContainer');
+  const area      = document.getElementById('uploadArea');
+  container.innerHTML = '';
+
+  if (input.files && input.files.length > 0) {
+    Array.from(input.files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        img.style.cssText = "width: 80px; height: 80px; object-fit: cover; border-radius: 8px;";
+        container.appendChild(img);
+      };
+      reader.readAsDataURL(file);
+    });
+    area.style.borderColor = 'var(--gr)';
+  }
+}
+
+/* Drag-over highlight */
+const area = document.getElementById('uploadArea');
+if (area) {
+  area.addEventListener('dragover',  () => area.classList.add('drag'));
+  area.addEventListener('dragleave', () => area.classList.remove('drag'));
+  area.addEventListener('drop',      () => area.classList.remove('drag'));
+}
+
+/* ─── Gallery Modal Logic ─── */
+let currentGalleryImages = [];
+let currentGalleryIndex = 0;
+
+function openGallery(imagesStr) {
+  if (!imagesStr) return;
+  currentGalleryImages = imagesStr.split(',');
+  if (currentGalleryImages.length > 0) {
+    currentGalleryIndex = 0;
+    updateGalleryView();
+    openModal('galleryModal');
+  }
+}
+
+function updateGalleryView() {
+  const imgElement = document.getElementById('galleryMainImg');
+  if (imgElement && currentGalleryImages[currentGalleryIndex]) {
+    imgElement.src = currentGalleryImages[currentGalleryIndex];
+  }
+}
+
+function nextGalleryImage(e) {
+  e.stopPropagation();
+  currentGalleryIndex = (currentGalleryIndex + 1) % currentGalleryImages.length;
+  updateGalleryView();
+}
+
+function prevGalleryImage(e) {
+  e.stopPropagation();
+  currentGalleryIndex = (currentGalleryIndex - 1 + currentGalleryImages.length) % currentGalleryImages.length;
+  updateGalleryView();
+}
+
+document.addEventListener('keydown', function(e) {
+  const gallery = document.getElementById('galleryModal');
+  if (gallery && (gallery.style.display === 'block' || gallery.classList.contains('show'))) {
+    if (e.key === 'ArrowRight') nextGalleryImage(e);
+    if (e.key === 'ArrowLeft') prevGalleryImage(e);
+  }
+});
+</script>
+{% endblock %}

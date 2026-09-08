@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+{% block title %}{{ u.name }}{% endblock %}
+{% block page_title %}User Profile{% endblock %}
+
+{% block topbar_actions %}
+{% if role == 'Admin' %}
+<div class="df g8">
+  <a href="{{ url_for('tenants') }}" class="btn-ghost sm">
+    <i class="bi bi-arrow-left"></i> Back to Users
+  </a>
+  <button class="btn-nv sm" onclick="openModal('editProfileModal')">
+    <i class="bi bi-pencil-square"></i> Edit
+  </button>
+</div>
+{% else %}
+<a href="{{ url_for('tenants') }}" class="btn-ghost sm">
+  <i class="bi bi-arrow-left"></i> Back to Users
+</a>
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .profile-grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .profile-grid { grid-template-columns: 1fr; } }
+
+  .section-label {
+    font-size: 11px; font-weight: 700; color: var(--mt); text-transform: uppercase;
+    letter-spacing: .08em; margin: 24px 0 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-label::after { content:''; flex: 1; height: 1px; background: var(--bd); }
+
+  .info-row { display: flex; justify-content: space-between; align-items: center;
+              padding: 10px 0; border-bottom: 1px solid var(--bg); font-size: 13.5px; gap: 12px; }
+  .info-row:last-child { border-bottom: none; }
+  .info-label { color: var(--mt); font-size: 12.5px; flex-shrink: 0; }
+  .info-val   { font-weight: 600; text-align: right; word-break: break-word; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  @media (max-width: 700px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+  .kpi-box { background: var(--wh); border: 1px solid var(--bd); border-radius: 11px;
+             padding: 14px 16px; }
+  .kpi-label { font-size: 11px; font-weight: 700; color: var(--mt); text-transform: uppercase;
+               letter-spacing: .07em; margin-bottom: 5px; }
+  .kpi-val { font-size: 20px; font-weight: 700; font-family: 'Syne', sans-serif; }
+
+  .timeline-list { list-style: none; padding: 0; margin: 0; }
+  .tl-item { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--bg); }
+  .tl-item:last-child { border-bottom: none; }
+  .tl-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+  .tl-dot.confirmed { background: var(--gr); }
+  .tl-dot.pending   { background: var(--wn); }
+  .tl-dot.failed    { background: var(--cr); }
+  .tl-body { flex: 1; min-width: 0; }
+
+  .empty-state { text-align: center; padding: 32px; color: var(--mt); }
+  .empty-state i { font-size: 28px; opacity: .3; display: block; margin-bottom: 10px; }
+
+  .av-xl { width: 72px; height: 72px; border-radius: 14px; font-size: 28px; font-weight: 700;
+           color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+  /* avatar colour cycle */
+  .av-nv { background: var(--nv); }
+  .av-gr { background: var(--gr); }
+  .av-cr { background: var(--cr); }
+  .av-wn { background: var(--wn); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── HEADER CARD ────────────────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:20px">
+  <div class="card-body" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div class="av-xl av-{{ ['nv','gr','wn','cr'][u.id % 4] }}">{{ u.name[0] | upper }}</div>
+
+    <div style="flex:1;min-width:0">
+      <div style="font-size:22px;font-weight:700;color:var(--tx);line-height:1.2">{{ u.name }}</div>
+      <div style="font-size:13px;color:var(--mt);margin-top:2px">{{ u.email }}
+        {% if u.phone %} &middot; {{ u.phone }}{% endif %}
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="badge-role br-{{ u.role }}" style="padding:4px 12px;border-radius:99px;font-size:11.5px;font-weight:700">{{ u.role }}</span>
+        {% if u.is_active %}
+          <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#047857;font-weight:600">
+            <i class="bi bi-circle-fill" style="font-size:7px"></i> Active
+          </span>
+        {% else %}
+          <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#9ca3af;font-weight:600">
+            <i class="bi bi-circle-fill" style="font-size:7px"></i> Suspended
+          </span>
+        {% endif %}
+        {% if tenancy %}
+          <span style="font-size:12px;color:var(--mt)">
+            <i class="bi bi-house-door" style="margin-right:3px"></i>
+            {{ tenancy.unit.prop.name if tenancy.unit and tenancy.unit.prop else '—' }},
+            Unit {{ tenancy.unit.unit_number if tenancy.unit else '—' }}
+          </span>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if role == 'Admin' %}
+    <div class="df g8" style="flex-shrink:0">
+      {% if u.is_active %}
+      <form method="POST" action="{{ url_for('deactivate_tenant', user_id=u.id) }}" onsubmit="return confirm('Suspend {{ u.name }}?')">
+        <button type="submit" class="btn-ghost sm"><i class="bi bi-person-slash"></i> Suspend</button>
+      </form>
+      {% else %}
+      <form method="POST" action="{{ url_for('activate_tenant', user_id=u.id) }}">
+        <button type="submit" class="btn-nv sm"><i class="bi bi-person-check"></i> Reactivate</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── KPI CARDS (tenants only) ───────────────────────────────────────── #}
+{% if u.role == 'Tenant' %}
+<div class="kpi-row">
+  <div class="kpi-box" style="border-left:4px solid var(--nv)">
+    <div class="kpi-label">Total Charged</div>
+    <div class="kpi-val text-nv">{{ fmt(total_charged) }}</div>
+  </div>
+  <div class="kpi-box" style="border-left:4px solid var(--gr)">
+    <div class="kpi-label">Total Paid</div>
+    <div class="kpi-val text-gr">{{ fmt(total_paid) }}</div>
+  </div>
+  <div class="kpi-box" style="border-left:4px solid {{ 'var(--cr)' if balance > 0 else 'var(--gr)' }}">
+    <div class="kpi-label">Balance Due</div>
+    <div class="kpi-val" style="color:{{ 'var(--cr)' if balance > 0 else 'var(--gr)' }}">{{ fmt(balance) }}</div>
+  </div>
+  <div class="kpi-box" style="border-left:4px solid var(--wn)">
+    <div class="kpi-label">Service Requests</div>
+    <div class="kpi-val text-wn">{{ tickets | length }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="profile-grid">
+
+  {# ── LEFT COLUMN ────────────────────────────────────────────────── #}
+  <div>
+
+    {# Personal Information #}
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-hdr"><span class="card-title">Personal Information</span></div>
+      <div class="card-body">
+        <div class="info-row"><span class="info-label">Full Name</span><span class="info-val">{{ u.name }}</span></div>
+        <div class="info-row"><span class="info-label">Email</span><span class="info-val" style="font-size:12.5px">{{ u.email }}</span></div>
+        <div class="info-row"><span class="info-label">Phone</span><span class="info-val">{{ u.phone or '—' }}</span></div>
+        <div class="info-row"><span class="info-label">Role</span>
+          <span class="badge-role br-{{ u.role }}" style="padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700">{{ u.role }}</span>
+        </div>
+        <div class="info-row"><span class="info-label">Status</span>
+          <span style="font-size:12px;font-weight:600;color:{{ '#047857' if u.is_active else '#9ca3af' }}">
+            {{ 'Active' if u.is_active else 'Suspended' }}
+          </span>
+        </div>
+        <div class="info-row"><span class="info-label">Member Since</span>
+          <span class="info-val">{{ u.created_at.strftime('%b %d, %Y') if u.created_at else '—' }}</span>
+        </div>
+      </div>
+    </div>
+
+    {# Tenancy Details #}
+    {% if u.role == 'Tenant' %}
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-hdr">
+        <span class="card-title">Current Tenancy</span>
+        {% if tenancy %}
+          <span class="badge b-confirmed" style="font-size:10.5px">Active Lease</span>
+        {% else %}
+          <span class="badge b-overdue" style="font-size:10.5px">No Active Lease</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        {% if tenancy %}
+          {% set prop = tenancy.unit.prop if tenancy.unit else None %}
+          <div class="info-row"><span class="info-label">Property</span><span class="info-val">{{ prop.name if prop else '—' }}</span></div>
+          <div class="info-row"><span class="info-label">Unit</span><span class="info-val">{{ tenancy.unit.unit_number if tenancy.unit else '—' }}</span></div>
+          <div class="info-row"><span class="info-label">Monthly Rent</span><span class="info-val text-nv">{{ fmt(tenancy.monthly_rent) }}</span></div>
+          <div class="info-row"><span class="info-label">Move-in Date</span><span class="info-val">{{ tenancy.start_date.strftime('%b %d, %Y') }}</span></div>
+          {% set days_left = (tenancy.end_date - today).days if tenancy.end_date else None %}
+          <div class="info-row"><span class="info-label">Lease End</span>
+            <span class="info-val" style="color:{{ 'var(--cr)' if days_left is not none and days_left < 60 else 'inherit' }}">
+              {{ tenancy.end_date.strftime('%b %d, %Y') if tenancy.end_date else 'Open-ended' }}
+            </span>
+          </div>
+          {% if days_left is not none %}
+          <div class="info-row"><span class="info-label">Days Left</span>
+            <span class="info-val" style="color:{{ 'var(--cr)' if days_left < 60 else 'var(--gr)' }}">
+              {{ days_left }} day{{ '' if days_left == 1 else 's' }}
+            </span>
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="empty-state"><i class="bi bi-house-x"></i>No active tenancy assigned.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Past Tenancies #}
+    {% if past_tenancies %}
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-hdr"><span class="card-title">Past Tenancies</span></div>
+      <div class="card-body" style="padding-top:4px">
+        {% for t in past_tenancies %}
+        <div class="info-row" style="align-items:flex-start">
+          <div>
+            <div class="fw6" style="font-size:13px">{{ t.unit.prop.name if t.unit and t.unit.prop else '—' }}</div>
+            <div style="font-size:12px;color:var(--mt)">Unit {{ t.unit.unit_number if t.unit else '—' }}</div>
+          </div>
+          <div style="text-align:right;font-size:12px;color:var(--mt)">
+            {{ t.start_date.strftime('%b %Y') }} → {{ t.end_date.strftime('%b %Y') if t.end_date else 'ongoing' }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% endif %}{# end Tenant #}
+
+    {# Documents #}
+    {% if documents %}
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Documents</span>
+        <span class="badge b-pending" style="font-size:10.5px">{{ documents | length }}</span>
+      </div>
+      <div class="card-body" style="padding-top:4px">
+        {% for doc in documents %}
+        <div class="df aic g8" style="padding:9px 0;border-bottom:1px solid var(--bg)">
+          <i class="bi bi-file-earmark-text" style="color:var(--nv);font-size:18px;flex-shrink:0"></i>
+          <div style="flex:1;min-width:0">
+            <div class="fw6" style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ doc.label or doc.original_filename }}</div>
+            <div style="font-size:11.5px;color:var(--mt)">{{ doc.doc_type | replace('_',' ') | title }} &middot; {{ doc.uploaded_at.strftime('%b %d, %Y') }}</div>
+          </div>
+          <a href="{{ url_for('documents', tenant_id=u.id) }}" class="btn-ghost sm" style="padding:4px 10px;font-size:11.5px">View</a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>{# end left col #}
+
+  {# ── RIGHT COLUMN ───────────────────────────────────────────────── #}
+  <div>
+
+    {# Invoice History #}
+    <div class="section-label"><i class="bi bi-receipt" style="color:var(--nv)"></i> Invoice History</div>
+    <div class="card" style="margin-bottom:20px">
+      {% if invoices %}
+      <div class="tw">
+        <table class="ht">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Due</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+            <tr>
+              <td class="fw6 text-nv" style="font-size:13px;white-space:nowrap">{{ inv.inv_number }}</td>
+              <td><span class="badge b-in-progress" style="font-size:10.5px">{{ inv.type }}</span></td>
+              <td class="fw6" style="white-space:nowrap">{{ fmt(inv.amount) }}</td>
+              <td style="font-size:12.5px;color:var(--mt);white-space:nowrap">
+                {% if inv.status == 'overdue' %}<i class="bi bi-exclamation-triangle-fill" style="color:var(--cr);margin-right:3px"></i>{% endif %}
+                {{ inv.due_date.strftime('%b %d, %Y') if inv.due_date else '—' }}
+              </td>
+              <td><span class="badge b-{{ inv.status }}" style="font-size:10.5px">{{ inv.status }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state"><i class="bi bi-receipt"></i>No invoices yet.</div>
+      {% endif %}
+    </div>
+
+    {# Payment Timeline #}
+    <div class="section-label"><i class="bi bi-credit-card" style="color:var(--gr)"></i> Payment History</div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body">
+        {% if transactions %}
+        <ul class="timeline-list">
+          {% for txn in transactions %}
+          <li class="tl-item">
+            <div class="tl-dot {{ txn.status }}"></div>
+            <div class="tl-body">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <div>
+                  <div class="fw6" style="font-size:13px">{{ txn.txn_number }}</div>
+                  <div style="font-size:12px;color:var(--mt)">{{ txn.method }} &middot; Ref: {{ txn.paystack_ref or '—' }}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                  <div class="fw6" style="font-size:14px">{{ fmt(txn.amount) }}</div>
+                  <div style="font-size:11.5px;color:var(--mt)">{{ txn.date.strftime('%b %d, %Y') if txn.date else '—' }}</div>
+                </div>
+              </div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty-state"><i class="bi bi-credit-card"></i>No transactions recorded.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Service Requests #}
+    <div class="section-label"><i class="bi bi-tools" style="color:var(--wn)"></i> Service Requests</div>
+    <div class="card" style="margin-bottom:20px">
+      {% if tickets %}
+      <div class="tw">
+        <table class="ht">
+          <thead>
+            <tr><th>Ref</th><th>Title</th><th>Priority</th><th>Status</th><th>Raised</th></tr>
+          </thead>
+          <tbody>
+            {% for tk in tickets %}
+            <tr>
+              <td class="fw6 text-nv" style="font-size:12.5px;white-space:nowrap">{{ tk.ticket_number }}</td>
+              <td style="font-size:13px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tk.title }}</td>
+              <td>
+                <span class="badge {{ 'b-overdue' if tk.priority=='urgent' else 'b-pending' if tk.priority=='high' else 'b-in-progress' }}" style="font-size:10.5px">{{ tk.priority }}</span>
+              </td>
+              <td><span class="badge b-{{ tk.status | replace(' ','-') }}" style="font-size:10.5px">{{ tk.status }}</span></td>
+              <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ tk.date_raised.strftime('%b %d, %Y') if tk.date_raised else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state"><i class="bi bi-tools"></i>No service requests.</div>
+      {% endif %}
+    </div>
+
+    {# Notification Log (Admin only) #}
+    {% if role == 'Admin' and notif_logs %}
+    <div class="section-label"><i class="bi bi-bell-history" style="color:var(--mt)"></i> Notification Log</div>
+    <div class="card">
+      <div class="tw">
+        <table class="ht">
+          <thead><tr><th>Type</th><th>Sent To</th><th>Date</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for log in notif_logs %}
+            <tr>
+              <td><span class="badge b-in-progress" style="font-size:10.5px">{{ log.notif_type | replace('_',' ') | title }}</span></td>
+              <td style="font-size:12px;color:var(--mt)">{{ log.recipient or '—' }}</td>
+              <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ log.sent_at.strftime('%b %d, %Y %H:%M') }}</td>
+              <td><span class="badge {{ 'b-confirmed' if log.status=='sent' else 'b-overdue' }}" style="font-size:10.5px">{{ log.status }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>{# end right col #}
+</div>
+
+
+{# ── EDIT PROFILE MODAL (Admin) ────────────────────────────────────── #}
+{% if role == 'Admin' %}
+<div class="modal-ov" id="editProfileModal">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-title">Edit — {{ u.name }}</span>
+      <button class="modal-close" onclick="closeModal('editProfileModal')">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+      <form method="POST" action="{{ url_for('edit_tenant', user_id=u.id) }}">
+        <div class="modal-section">Account Details</div>
+        <div class="fg">
+          <label class="form-label">Full Name</label>
+          <input class="form-ctrl" name="name" value="{{ u.name }}" required/>
+        </div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Email</label>
+            <input class="form-ctrl" type="email" name="email" value="{{ u.email }}" required/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Phone</label>
+            <input class="form-ctrl" name="phone" value="{{ u.phone or '' }}"/>
+          </div>
+        </div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Role</label>
+            <select class="form-sel" name="role">
+              {% for r in ['Tenant','Landlord','Admin'] %}
+              <option value="{{ r }}" {{ 'selected' if u.role == r }}>{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fg">
+            <label class="form-label">New Password <span style="font-weight:400;font-size:10px">(leave blank)</span></label>
+            <input class="form-ctrl" type="password" name="password" placeholder="New password…" minlength="6"/>
+          </div>
+        </div>
+        {% if u.role == 'Tenant' and tenancy %}
+        <div class="modal-section">Tenancy</div>
+        <div class="fg2">
+          <div class="fg">
+            <label class="form-label">Monthly Rent (₦)</label>
+            <input class="form-ctrl" type="number" name="monthly_rent" value="{{ tenancy.monthly_rent }}" min="0"/>
+          </div>
+          <div class="fg">
+            <label class="form-label">Lease End Date</label>
+            <input class="form-ctrl" type="date" name="end_date" value="{{ tenancy.end_date.strftime('%Y-%m-%d') if tenancy.end_date else '' }}"/>
+          </div>
+        </div>
+        {% endif %}
+        <div class="df g8" style="margin-top:24px">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('editProfileModal')">Cancel</button>
+          <button type="submit" class="btn-cr" style="flex:1;justify-content:center"><i class="bi bi-check2"></i> Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  /* Pass today's date for lease countdown */
+  const now = new Date();
+</script>
+{% endblock %}

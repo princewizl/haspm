@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block topbar_actions %}
+<form class="search-box" action="#" method="get">
+  <i class="bi bi-search" style="font-size:14px"></i>
+  <input type="text" name="q" placeholder="Search…"/>
+</form>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  /* ─ Core Animations & Elements ─ */
+  .sv { transition: all .4s; }
+  .feed-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--bg); }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+  
+  /* ─ Responsive Grid Layouts ─ */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 22px; }
+  .qa-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 22px; }
+  .dash-grid-2 { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; margin-bottom: 18px; }
+  .dash-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .span-2 { grid-column: span 2; }
+  
+  /* Table Wrapper for horizontal scroll on mobile */
+  .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
+  
+  /* Flexible headers */
+  .admin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; flex-wrap: wrap; gap: 12px; }
+
+  /* ─ Mini quick-action cards ─ */
+  .qa-card { background: var(--wh); border: 1px solid var(--bd); border-radius: 12px; padding: 16px 18px; display: flex; align-items: center; gap: 13px; cursor: pointer; transition: all .2s; text-decoration: none; }
+  .qa-card:hover { border-color: var(--cr); box-shadow: 0 4px 14px rgba(201,24,74,.1); transform: translateY(-1px); }
+  .qa-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  
+  /* ─ Tenant dashboard card ─ */
+  .tenant-hero { background: linear-gradient(135deg, var(--nv-d) 0%, var(--nv) 60%, #1a5799 100%); border-radius: 16px; padding: 28px 28px 24px; margin-bottom: 22px; position: relative; overflow: hidden; }
+  .tenant-hero::before { content: ''; position: absolute; right: -40px; top: -40px; width: 200px; height: 200px; border-radius: 50%; background: rgba(255,255,255,.04); }
+  .tenant-hero::after { content: ''; position: absolute; right: 60px; bottom: -30px; width: 130px; height: 130px; border-radius: 50%; background: rgba(201,24,74,.1); }
+
+  /* ─ Media Queries for Mobile/Tablet ─ */
+  @media (max-width: 992px) {
+    .dash-grid-2 { grid-template-columns: 1fr; }
+    .dash-grid-3 { grid-template-columns: 1fr; }
+    .span-2 { grid-column: span 1; }
+  }
+  
+  @media (max-width: 768px) {
+    .qa-grid { grid-template-columns: 1fr; }
+    .tenant-hero { padding: 20px; }
+    .tenant-hero::before, .tenant-hero::after { display: none; }
+    .admin-header h2 { font-size: 18px !important; }
+  }
+  /* ─ Tenant Property Card ─ */
+  .tenant-prop-card { display: flex; gap: 20px; padding: 16px; flex-wrap: wrap; }
+  .prop-info { flex: 1; min-width: 250px; }
+  .prop-gallery { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+  .prop-gallery img { width: 160px; height: 100px; object-fit: cover; border-radius: 8px; border: 1px solid var(--bd); flex-shrink: 0; transition: transform 0.2s; }
+  .prop-gallery img:hover { transform: scale(1.02); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ─── TENANT VIEW ─── #}
+{% if role == 'Tenant' %}
+<div class="tenant-hero">
+  <div style="position:relative;z-index:1">
+    <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.5);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px">Welcome back</div>
+    <h2 class="syne" style="font-size:26px;font-weight:800;color:#fff;margin-bottom:4px">{{ session.user }} 👋</h2>
+    <p style="color:rgba(255,255,255,.55);font-size:14px">
+      {% set ti = tenant_invoices %}
+      {% set overdue = ti|selectattr('status','equalto','overdue')|list %}
+      {% if overdue %}
+        You have <strong style="color:#fca5a5">{{ overdue|length }} overdue invoice{{ 's' if overdue|length>1 }}</strong> — please settle soon.
+      {% else %}
+        All your invoices are up to date. Great job!
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="stat-grid">
+  {% set ti = tenant_invoices %}
+  <div class="stat-card">
+    <div><div class="sl">My Invoices</div><div class="sv" data-target="{{ ti|length }}">{{ ti|length }}</div><div class="ss text-nv">{{ ti|selectattr('status','equalto','paid')|list|length }} paid</div></div>
+    <div class="sic" style="background:rgba(13,58,107,.1)"><i class="bi bi-receipt" style="font-size:22px;color:var(--nv)"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="sl">Outstanding</div><div class="sv text-cr">{{ fmt(ti|selectattr('status','ne','paid')|sum(attribute='amount')) }}</div><div class="ss text-rd">{{ ti|selectattr('status','equalto','overdue')|list|length }} overdue</div></div>
+    <div class="sic" style="background:rgba(201,24,74,.1)"><i class="bi bi-currency-exchange" style="font-size:22px;color:var(--cr)"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="sl">My Requests</div><div class="sv">{{ tenant_tickets|length }}</div><div class="ss text-mt">{{ tenant_tickets|selectattr('status','equalto','open')|list|length }} open</div></div>
+    <div class="sic" style="background:rgba(245,158,11,.1)"><i class="bi bi-tools" style="font-size:22px;color:var(--wn)"></i></div>
+  </div>
+</div>
+
+<div class="dash-grid-2">
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">My Invoices</span><a href="{{ url_for('invoices') }}" class="btn-ghost sm">View all</a></div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Invoice</th><th>Type</th><th>Amount</th><th>Due</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for inv in tenant_invoices %}
+          <tr>
+            <td class="fw7 text-nv">{{ inv.id }}</td>
+            <td><span class="badge b-in-progress" style="font-size:10.5px">{{ inv.type }}</span></td>
+            <td class="fw7">{{ fmt(inv.amount) }}</td>
+            <td style="color:{% if inv.status=='overdue' %}var(--cr){% else %}var(--mt){% endif %};font-size:13px">{{ inv.due }}</td>
+            <td><span class="badge b-{{ inv.status }}">{{ inv.status }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" style="text-align:center;color:var(--mt);padding:24px">No invoices found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">My Requests</span><a href="{{ url_for('service') }}" class="btn-ghost sm">View all</a></div>
+    <div style="padding:8px 0">
+      {% for t in tenant_tickets %}
+      <div class="feed-item" style="padding:12px 18px">
+        <div class="feed-dot {% if t.status=='open' %}{% elif t.status=='resolved' %}{% endif %}" style="background:{% if t.status=='resolved' %}rgba(16,185,129,.12){% elif t.status=='in-progress' %}rgba(13,58,107,.12){% else %}rgba(201,24,74,.12){% endif %}">
+          <i class="bi bi-{% if t.status=='resolved' %}check-circle-fill{% elif t.status=='in-progress' %}arrow-repeat{% else %}exclamation-circle-fill{% endif %}" style="color:{% if t.status=='resolved' %}var(--gr){% elif t.status=='in-progress' %}var(--nv){% else %}var(--cr){% endif %}"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="fw6" style="font-size:13.5px;margin-bottom:2px">{{ t.title }}</div>
+          <div style="font-size:11.5px;color:var(--mt)">{{ t.category }} · {{ t.date }}</div>
+        </div>
+        <span class="badge b-{{ t.status }}" style="font-size:10.5px;margin-left:8px">{{ t.status }}</span>
+      </div>
+      {% else %}
+      <div style="padding:24px;text-align:center;color:var(--mt)">No service requests.</div>
+      {% endfor %}
+    </div>
+  </div>
+  <!-- My Property Section -->
+{% if tenant_property %}
+<div class="card" style="margin-bottom: 22px;">
+  <div class="card-hdr"><span class="card-title">My Residence</span></div>
+  <div class="tenant-prop-card">
+    
+    <!-- Property Info -->
+    <div class="prop-info">
+      <div style="font-size: 11px; font-weight: 600; color: var(--mt); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+        Current Lease
+      </div>
+      <h3 class="syne" style="font-size: 20px; font-weight: 700; color: var(--nv); margin-bottom: 6px;">
+        {{ tenant_property.name }}
+      </h3>
+      <div style="font-size: 13.5px; color: var(--mt); margin-bottom: 12px;">
+        <i class="bi bi-geo-alt" style="margin-right: 4px;"></i> {{ tenant_property.address }}
+      </div>
+      
+      {% if tenant_property.unit_number %}
+        <span class="badge" style="background: rgba(13,58,107,.1); color: var(--nv); font-size: 12px; padding: 6px 10px;">
+          Unit: {{ tenant_property.unit_number }}
+        </span>
+      {% endif %}
+    </div>
+    
+    <!-- Property Images -->
+    {% if tenant_property.images %}
+    <div class="prop-gallery">
+      {% for img in tenant_property.images %}
+        <img src="{{ img }}" alt="{{ tenant_property.name }} Image">
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="prop-gallery">
+      <!-- Fallback if no images are available -->
+      <div style="width: 160px; height: 100px; background: var(--bg); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--mt);">
+        <i class="bi bi-image" style="font-size: 24px;"></i>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+</div>
+
+{% else %}
+{# ─── ADMIN / LANDLORD VIEW ─── #}
+
+<!-- Welcome -->
+<div class="admin-header">
+  <div>
+    <h2 class="syne" style="font-size:22px;font-weight:700;margin-bottom:3px">
+      Good day, {{ session.user.split()[0] if session.role=='Landlord' else 'Administrator' }} 👋
+    </h2>
+    <p style="color:var(--mt);font-size:13px">Here's an overview of your property portfolio.</p>
+  </div>
+  <span style="font-size:12.5px;color:var(--mt);background:var(--wh);border:1px solid var(--bd);padding:6px 14px;border-radius:8px">
+    <i class="bi bi-calendar3" style="margin-right:5px"></i> May 2025
+  </span>
+</div>
+
+<!-- Quick actions (Admin only) -->
+{% if role == 'Admin' %}
+<div class="qa-grid">
+  <a href="{{ url_for('properties') }}" class="qa-card">
+    <div class="qa-icon" style="background:rgba(201,24,74,.1)"><i class="bi bi-plus-circle" style="color:var(--cr)"></i></div>
+    <div><div class="fw6" style="font-size:13.5px">Add Property</div><div style="font-size:11.5px;color:var(--mt)">Register new listing</div></div>
+  </a>
+  <a href="{{ url_for('invoices') }}" class="qa-card">
+    <div class="qa-icon" style="background:rgba(13,58,107,.1)"><i class="bi bi-receipt" style="color:var(--nv)"></i></div>
+    <div><div class="fw6" style="font-size:13.5px">Create Invoice</div><div style="font-size:11.5px;color:var(--mt)">Bill a tenant</div></div>
+  </a>
+  <a href="{{ url_for('service') }}" class="qa-card">
+    <div class="qa-icon" style="background:rgba(16,185,129,.1)"><i class="bi bi-person-check" style="color:var(--gr)"></i></div>
+    <div><div class="fw6" style="font-size:13.5px">Assign Technician</div><div style="font-size:11.5px;color:var(--mt)">Dispatch for open tickets</div></div>
+  </a>
+</div>
+{% endif %}
+
+<!-- Stat Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div><div class="sl">Total Properties</div><div class="sv counter" data-target="{{ properties|length }}">0</div><div class="ss text-gr">↑ 1 this quarter</div></div>
+    <div class="sic" style="background:rgba(13,58,107,.1)"><i class="bi bi-buildings" style="font-size:22px;color:var(--nv)"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="sl">Revenue (MTD)</div><div class="sv text-cr">{{ fmt(paid_rev) }}</div><div class="ss text-gr">↑ 12% vs last month</div></div>
+    <div class="sic" style="background:rgba(201,24,74,.1)"><i class="bi bi-graph-up-arrow" style="font-size:22px;color:var(--cr)"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="sl">Pending Invoices</div><div class="sv counter" data-target="{{ pending_count }}">0</div><div class="ss text-rd">{{ overdue_count }} overdue</div></div>
+    <div class="sic" style="background:rgba(245,158,11,.1)"><i class="bi bi-receipt" style="font-size:22px;color:var(--wn)"></i></div>
+  </div>
+  <div class="stat-card">
+    <div><div class="sl">Open Tickets</div><div class="sv counter" data-target="{{ open_tickets }}">0</div><div class="ss text-rd">{{ urgent_count }} urgent</div></div>
+    <div class="sic" style="background:rgba(239,68,68,.1)"><i class="bi bi-tools" style="font-size:22px;color:var(--rd)"></i></div>
+  </div>
+</div>
+
+<!-- Charts Row -->
+<div class="dash-grid-2">
+  <div class="card">
+    <div class="card-hdr">
+      <span class="card-title">Revenue vs Expenses</span>
+      <div class="df g8">
+        <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--mt)"><span style="width:10px;height:10px;border-radius:2px;background:var(--cr);display:inline-block"></span>Revenue</span>
+        <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--mt)"><span style="width:10px;height:10px;border-radius:2px;background:var(--nv);display:inline-block"></span>Expenses</span>
+      </div>
+    </div>
+    <div class="card-body"><canvas id="revChart" height="82"></canvas></div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">Occupancy Rate</span></div>
+    <div class="card-body">
+      {% for p in occ_data %}
+      {% set pct = p.pct %}
+      <div style="margin-bottom:16px">
+        <div class="df aic" style="justify-content:space-between;margin-bottom:5px">
+          <span style="font-size:12.5px;font-weight:500">{{ p.name }}</span>
+          <span style="font-size:12px;color:var(--mt)">{{ p.occ }}/{{ p.total }}</span>
+        </div>
+        <div class="pb-wrap">
+          <div class="pb-fill" style="width:{{ pct }}%;background:{% if pct==100 %}var(--gr){% elif pct<60 %}var(--cr){% else %}var(--nv){% endif %}"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Bottom row -->
+<div class="dash-grid-3">
+  <!-- Recent Invoices -->
+  <div class="card span-2">
+    <div class="card-hdr"><span class="card-title">Recent Invoices</span><a href="{{ url_for('invoices') }}" class="btn-ghost sm">View all</a></div>
+    <div class="tw">
+      <table class="ht">
+        <thead><tr><th>Tenant</th><th>Property</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for inv in invoices %}
+          <tr>
+            <td>
+              <div class="df aic g8">
+                <div class="av nv" style="width:30px;height:30px;font-size:12px">{{ inv.tenant[0] }}</div>
+                <div><div class="fw6" style="font-size:13px">{{ inv.tenant }}</div><div style="font-size:11px;color:var(--mt)">{{ inv.id }} · {{ inv.type }}</div></div>
+              </div>
+            </td>
+            <td style="font-size:12.5px;color:var(--mt)">{{ inv.property }}</td>
+            <td class="fw7">{{ fmt(inv.amount) }}</td>
+            <td><span class="badge b-{{ inv.status }}">{{ inv.status }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Active Tickets feed -->
+  <div class="card">
+    <div class="card-hdr"><span class="card-title">Active Tickets</span><a href="{{ url_for('service') }}" class="btn-ghost sm">All</a></div>
+    <div style="padding:6px 0">
+      {% for t in tickets if t.status != 'resolved' %}
+      {% if loop.index <= 4 %}
+      <div class="feed-item" style="padding:10px 18px">
+        <div class="feed-dot" style="width:28px;height:28px;border-radius:50%;background:{% if t.priority=='urgent' %}rgba(201,24,74,.12){% elif t.priority=='high' %}rgba(245,158,11,.12){% else %}rgba(13,58,107,.1){% endif %};display:flex;align-items:center;justify-content:center">
+          <i class="bi bi-exclamation-circle" style="font-size:13px;color:{% if t.priority=='urgent' %}var(--cr){% elif t.priority=='high' %}var(--wn){% else %}var(--nv){% endif %}"></i>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="fw6" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.title }}</div>
+          <div style="font-size:11px;color:var(--mt)">{{ t.property }}</div>
+        </div>
+        <span class="badge b-{{ t.priority }}" style="font-size:10px;margin-left:6px">{{ t.priority }}</span>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* Counter animation */
+document.querySelectorAll('.counter').forEach(el=>{
+  const target=+el.dataset.target,dur=900,step=dur/target||1;
+  let cur=0;
+  const t=setInterval(()=>{cur=Math.min(cur+1,target);el.textContent=cur;if(cur>=target)clearInterval(t);},step);
+});
+
+{% if role != 'Tenant' %}
+/* Revenue chart */
+const rd={{ rev_data|tojson }};
+new Chart(document.getElementById('revChart'),{
+  type:'line',
+  data:{
+    labels:rd.map(d=>d.month),
+    datasets:[
+      {label:'Revenue',data:rd.map(d=>d.rev),borderColor:'#C9184A',backgroundColor:'rgba(201,24,74,0.07)',fill:true,tension:.4,pointRadius:4,pointBackgroundColor:'#C9184A',borderWidth:2.5},
+      {label:'Expenses',data:rd.map(d=>d.exp),borderColor:'#0D3A6B',backgroundColor:'rgba(13,58,107,0.06)',fill:true,tension:.4,pointRadius:4,pointBackgroundColor:'#0D3A6B',borderWidth:2.5}
+    ]
+  },
+  options:{
+    responsive:true,
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₦'+(ctx.raw/1e6).toFixed(2)+'M'}}},
+    scales:{
+      y:{ticks:{callback:v=>'₦'+(v/1e6).toFixed(1)+'M',font:{size:11},color:'#64748B'},grid:{color:'#E2E8F0'},border:{display:false}},
+      x:{ticks:{font:{size:11},color:'#64748B'},grid:{display:false},border:{display:false}}
+    }
+  }
+});
+{% endif %}
+</script>
+{% endblock %}

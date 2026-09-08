@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Sign In | HS Property</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800;900&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    :root{--cr:#C9184A;--cr-d:#9E1239;--nv:#0D3A6B;--nv-d:#082140;--wh:#fff;}
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    /* Updated global scroll properties for responsiveness */
+    html, body {
+  min-height: 100vh;
+  font-family: 'DM Sans', sans-serif;
+  background: #08121d; /* Changed from #030C14 to a lighter slate */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+    canvas#bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: auto; /* Changed to auto to track mouse */
+}
+    .root{position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr;min-height:100vh;}
+
+    /* LEFT */
+    .left{display:flex;flex-direction:column;justify-content:center;padding:60px 54px;position:relative;overflow:hidden;}
+    .glw1{position:absolute;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(201,24,74,.16) 0%,transparent 70%);top:-100px;left:-100px;pointer-events:none;animation:pulse 5s ease-in-out infinite;}
+    .glw2{position:absolute;width:400px;height:400px;border-radius:50%;background:radial-gradient(circle,rgba(13,58,107,.22) 0%,transparent 70%);bottom:-80px;right:-60px;pointer-events:none;animation:pulse 6s ease-in-out infinite reverse;}
+    @keyframes pulse{0%,100%{transform:scale(1);opacity:1;}50%{transform:scale(1.18);opacity:.65;}}
+    .divline{position:absolute;top:0;right:0;bottom:0;width:1px;background:linear-gradient(180deg,transparent,rgba(201,24,74,.35) 30%,rgba(13,58,107,.3) 70%,transparent);}
+
+    .logo{display:flex;align-items:center;gap:14px;margin-bottom:58px;opacity:0;animation:up .7s .1s forwards;}
+    .em{position:relative;width:50px;height:50px;flex-shrink:0;}
+    .em .lh{position:absolute;top:0;left:0;font-family:'Syne',sans-serif;font-weight:900;font-size:32px;color:var(--cr);line-height:1;filter:drop-shadow(0 0 14px rgba(201,24,74,.6));}
+    .em .ls{position:absolute;bottom:0;right:0;font-family:'Syne',sans-serif;font-weight:900;font-size:32px;color:#fff;line-height:1;filter:drop-shadow(0 0 10px rgba(255,255,255,.25));}
+    .lt .t1{font-family:'Syne',sans-serif;font-weight:800;font-size:19px;color:#fff;}
+    .lt .t2{font-size:10.5px;color:rgba(255,255,255,.35);letter-spacing:.13em;text-transform:uppercase;margin-top:2px;}
+
+    .tag{display:inline-flex;align-items:center;gap:8px;background:rgba(201,24,74,.13);border:1px solid rgba(201,24,74,.28);border-radius:99px;padding:5px 14px;margin-bottom:20px;opacity:0;animation:up .7s .25s forwards;}
+    .tagdot{width:7px;height:7px;border-radius:50%;background:var(--cr);animation:blink 1.8s ease-in-out infinite;}
+    @keyframes blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.65)}}
+    .tag span{font-size:12px;font-weight:600;color:var(--cr);letter-spacing:.06em;}
+
+    .h1{font-family:'Syne',sans-serif;font-weight:900;font-size:46px;line-height:1.07;color:#fff;margin-bottom:18px;opacity:0;animation:up .7s .35s forwards;}
+    .h1 .acc{color:var(--cr);position:relative;}
+    .h1 .acc::after{content:'';position:absolute;bottom:3px;left:0;width:100%;height:3px;background:linear-gradient(90deg,var(--cr),transparent);border-radius:99px;}
+    .sub{font-size:15px;line-height:1.68;color:rgba(255,255,255,.48);max-width:390px;margin-bottom:46px;opacity:0;animation:up .7s .45s forwards;}
+
+    .feats{display:flex;flex-direction:column;gap:14px;opacity:0;animation:up .7s .55s forwards;}
+    .feat{display:flex;align-items:center;gap:13px;color:rgba(255,255,255,.58);font-size:14px;}
+    .fic{width:34px;height:34px;border-radius:9px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:15px;}
+    .fic.r{background:rgba(201,24,74,.17);color:var(--cr);border:1px solid rgba(201,24,74,.22);}
+    .fic.b{background:rgba(13,58,107,.28);color:#6ab4f5;border:1px solid rgba(13,58,107,.35);}
+    .fic.g{background:rgba(16,185,129,.14);color:#34d399;border:1px solid rgba(16,185,129,.2);}
+
+    @keyframes up{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
+
+    /* RIGHT */
+    .right{display:flex;align-items:center;justify-content:center;padding:40px;background:rgba(255,255,255,.022);backdrop-filter:blur(2px);}
+    .card{background:rgba(255,255,255,.044);border:1px solid rgba(255,255,255,.09);border-radius:22px;padding:42px 38px;width:100%;max-width:438px;backdrop-filter:blur(22px);box-shadow:0 40px 80px rgba(0,0,0,.52),inset 0 1px 0 rgba(255,255,255,.06);opacity:0;animation:up .8s .3s forwards;}
+
+    .ch{margin-bottom:30px;}
+    .ch h2{font-family:'Syne',sans-serif;font-weight:800;font-size:26px;color:#fff;margin-bottom:6px;}
+    .ch p{color:rgba(255,255,255,.4);font-size:14px;}
+
+    .fg{margin-bottom:18px;}
+    .fl{display:block;font-size:12px;font-weight:700;color:rgba(255,255,255,.55);margin-bottom:7px;letter-spacing:.06em;text-transform:uppercase;}
+    .fw{position:relative;}
+    .fi{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,.25);font-size:15px;pointer-events:none;transition:color .25s;}
+    .ff{width:100%;background:rgba(255,255,255,.056);border:1.5px solid rgba(255,255,255,.1);border-radius:11px;padding:12px 44px 12px 42px;color:#fff;font-size:14.5px;outline:none;font-family:'DM Sans',sans-serif;transition:border-color .25s,background .25s,box-shadow .25s;}
+    .ff::placeholder{color:rgba(255,255,255,.2);}
+    .ff:focus{border-color:var(--cr);background:rgba(201,24,74,.07);box-shadow:0 0 0 4px rgba(201,24,74,.13);}
+    .fw:focus-within .fi{color:var(--cr);}
+    .ptog{position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;color:rgba(255,255,255,.28);cursor:pointer;font-size:15px;transition:color .2s;padding:2px;}
+    .ptog:hover{color:rgba(255,255,255,.65);}
+
+    .frow{display:flex;justify-content:flex-end;margin:-6px 0 22px;}
+    .fl2{font-size:12.5px;color:rgba(255,255,255,.32);text-decoration:none;transition:color .2s;}
+    .fl2:hover{color:var(--cr);}
+
+    .bsub{width:100%;padding:13.5px;border:none;border-radius:12px;background:linear-gradient(135deg,var(--cr),var(--cr-d));color:#fff;font-family:'Syne',sans-serif;font-size:15px;font-weight:700;cursor:pointer;position:relative;overflow:hidden;box-shadow:0 6px 26px rgba(201,24,74,.4);transition:transform .2s,box-shadow .2s;display:flex;align-items:center;justify-content:center;gap:9px;}
+    .bsub:hover{transform:translateY(-2px);box-shadow:0 10px 34px rgba(201,24,74,.52);}
+    .bsub:active{transform:translateY(0);}
+    .shim{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.11),transparent);transform:translateX(-100%);animation:shimmer 2.8s infinite;}
+    @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+    .spin{display:none;width:18px;height:18px;border:2.5px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:rot .7s linear infinite;}
+    @keyframes rot{to{transform:rotate(360deg)}}
+    .bsub.ld .spin{display:block;}
+    .bsub.ld .btx{display:none;}
+    .bsub.ld .shim{display:none;}
+
+    .aerr{background:rgba(201,24,74,.12);border:1px solid rgba(201,24,74,.28);border-radius:10px;padding:11px 14px;margin-bottom:18px;display:flex;align-items:center;gap:9px;color:#fca5a5;font-size:13.5px;animation:shake .4s ease;}
+    @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
+
+    .ainfo{background:rgba(13,58,107,.18);border:1px solid rgba(13,58,107,.3);border-radius:10px;padding:11px 14px;margin-bottom:18px;display:flex;align-items:center;gap:9px;color:#93c5fd;font-size:13.5px;}
+
+    .divider{display:flex;align-items:center;gap:12px;margin:24px 0;color:rgba(255,255,255,.2);font-size:12px;}
+    .divider::before,.divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.09);}
+
+    .demo{background:rgba(13,58,107,.16);border:1px solid rgba(13,58,107,.28);border-radius:12px;padding:14px 16px;margin-top:20px;}
+    .dtitle{font-size:10px;font-weight:700;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.13em;margin-bottom:10px;}
+    .dr{display:flex;justify-content:space-between;align-items:center;padding:7px 8px;border-radius:7px;cursor:pointer;transition:background .15s;border-bottom:1px solid rgba(255,255,255,.05);}
+    .dr:last-child{border-bottom:none;}
+    .dr:hover{background:rgba(255,255,255,.05);}
+    .drole{font-size:12px;font-weight:600;color:rgba(255,255,255,.52);display:flex;align-items:center;gap:7px;}
+    .dc{font-size:11.5px;color:rgba(255,255,255,.3);font-family:monospace;}
+    .dot{width:6px;height:6px;border-radius:50%;}
+    .da{background:#C9184A;}.db{background:#6ab4f5;}.dg{background:#34d399;}
+
+    .foot{text-align:center;margin-top:18px;font-size:11.5px;color:rgba(255,255,255,.2);}
+    .foot span{color:rgba(201,24,74,.65);}
+
+    /* ── RESPONSIVE MEDIA QUERIES ── */
+    @media (max-width: 992px) {
+      .root { display: flex; flex-direction: column; }
+      .left { padding: 50px 30px 20px; text-align: center; align-items: center; }
+      .logo { margin-bottom: 30px; }
+      .h1 { font-size: 38px; }
+      .h1 br { display: none; }
+      .sub { max-width: 100%; margin-bottom: 30px; }
+      .feats { width: 100%; max-width: 380px; align-items: flex-start; text-align: left; }
+      .divline { display: none; }
+      .right { padding: 20px 20px 60px; background: transparent; backdrop-filter: none; }
+      .card { padding: 32px 28px; }
+    }
+
+    @media (max-width: 480px) {
+      .left { padding: 40px 20px 10px; }
+      .em { width: 42px; height: 42px; }
+      .em .lh, .em .ls { font-size: 26px; }
+      .lt .t1 { font-size: 17px; }
+      .h1 { font-size: 32px; line-height: 1.15; }
+      .sub { font-size: 14px; margin-bottom: 24px; }
+      .feat { font-size: 13px; }
+      .fic { width: 30px; height: 30px; font-size: 13px; }
+      .card { padding: 28px 20px; }
+      .ch h2 { font-size: 22px; }
+      .ch p { font-size: 13px; }
+      .dr { flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px; }
+      .dtitle { margin-bottom: 6px; }
+    }
+  </style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div class="root">
+  <!-- LEFT PANEL -->
+  <div class="left">
+    <div class="glw1"></div><div class="glw2"></div><div class="divline"></div>
+    <div class="logo">
+      <div class="em"><span class="lh">H</span><span class="ls">S</span></div>
+      <div class="lt"><div class="t1">Hearts & Sleeves</div><div class="t2">Management Platform</div></div>
+    </div>
+    <div class="tag"><div class="tagdot"></div><span>All-in-one Property Solution</span></div>
+    <h1 class="h1">Manage Every<br>Property with<br><span class="acc">Precision</span></h1>
+    <p class="sub">From lease tracking to maintenance dispatch — one intelligent platform for landlords, tenants and administrators.</p>
+    <div class="feats">
+      <div class="feat"><div class="fic r"><i class="bi bi-buildings"></i></div><span>Multi-property & unit management</span></div>
+      <div class="feat"><div class="fic b"><i class="bi bi-credit-card"></i></div><span>Paystack-powered invoicing & payments</span></div>
+      <div class="feat"><div class="fic g"><i class="bi bi-tools"></i></div><span>Service request tracking & technician dispatch</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right">
+    <div class="card">
+      <div class="ch"><h2>Welcome back</h2><p>Sign in to access your dashboard</p></div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+          <div class="{{ 'aerr' if cat=='danger' else 'ainfo' }}">
+            <i class="bi bi-{{ 'exclamation-circle-fill' if cat=='danger' else 'info-circle-fill' }}"></i> {{ msg }}
+          </div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="POST" action="{{ url_for('login') }}" id="lf">
+        <div class="fg">
+          <label class="fl">Email Address</label>
+          <div class="fw">
+            <i class="bi bi-envelope fi"></i>
+            <input class="ff" type="email" name="email" placeholder="you@example.com" required autocomplete="email"/>
+          </div>
+        </div>
+        <div class="fg">
+          <label class="fl">Password</label>
+          <div class="fw">
+            <i class="bi bi-lock fi"></i>
+            <input class="ff" type="password" name="password" id="pf" placeholder="Enter your password" required/>
+            <button type="button" class="ptog" onclick="toggleP()"><i class="bi bi-eye" id="pi"></i></button>
+          </div>
+        </div>
+        <div class="frow"><a href="#" class="fl2">Forgot password?</a></div>
+        <button type="submit" class="bsub" id="sb">
+          <div class="shim"></div>
+          <span class="btx">Sign In &rarr;</span>
+          <div class="spin"></div>
+        </button>
+      </form>
+
+      <div class="divider">Quick Access — Demo Accounts</div>
+      <div class="demo">
+        <div class="dtitle">Click any row to fill credentials</div>
+        <div class="dr" onclick="fill('admin@hs.com','admin123')">
+          <span class="drole"><span class="dot da"></span>Admin</span>
+          <span class="dc">admin@hs.com / admin123</span>
+        </div>
+        <div class="dr" onclick="fill('landlord@hs.com','land123')">
+          <span class="drole"><span class="dot db"></span>Landlord</span>
+          <span class="dc">landlord@hs.com / land123</span>
+        </div>
+        <div class="dr" onclick="fill('tenant@hs.com','tenant123')">
+          <span class="drole"><span class="dot dg"></span>Tenant</span>
+          <span class="dc">tenant@hs.com / tenant123</span>
+        </div>
+      </div>
+      <div class="foot">Secured by <span>HS Property</span> &middot; SSL Encrypted</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ─ Canvas particle/city animation ─ */
+const cv = document.getElementById('bg'), cx = cv.getContext('2d');
+let W, H, pts = [], mouse = { x: -1000, y: -1000 };
+
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+window.addEventListener('resize', resize);
+window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+resize();
+
+class Particle {
+  constructor() { this.init(); }
+  init() {
+    this.x = Math.random() * W;
+    this.y = Math.random() * H;
+    this.vx = (Math.random() - 0.5) * 0.5;
+    this.vy = (Math.random() - 0.5) * 0.5;
+    this.radius = Math.random() * 2 + 1;
+    this.color = Math.random() > 0.5 ? '#C9184A' : '#6ab4f5';
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Mouse Repulsion Physics
+    let dx = mouse.x - this.x, dy = mouse.y - this.y;
+    let dist = Math.hypot(dx, dy);
+    if (dist < 150) {
+      let angle = Math.atan2(dy, dx);
+      this.x -= Math.cos(angle) * 1.5;
+      this.y -= Math.sin(angle) * 1.5;
+    }
+    
+    if (this.x < 0 || this.x > W) this.vx *= -1;
+    if (this.y < 0 || this.y > H) this.vy *= -1;
+  }
+  draw() {
+    cx.beginPath();
+    cx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    cx.fillStyle = this.color;
+    cx.globalAlpha = 0.6;
+    cx.fill();
+  }
+}
+
+// Create particles
+pts = Array.from({ length: 80 }, () => new Particle());
+
+function drawConnections() {
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      let d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+      if (d < 180) {
+        cx.beginPath();
+        cx.moveTo(pts[i].x, pts[i].y);
+        cx.lineTo(pts[j].x, pts[j].y);
+        cx.strokeStyle = pts[i].color;
+        cx.globalAlpha = (1 - d / 180) * 0.2;
+        cx.lineWidth = 0.5;
+        cx.stroke();
+      }
+    }
+  }
+}
+
+function frame() {
+  // Soft trails effect
+  cx.fillStyle = 'rgba(8, 18, 29, 0.2)'; 
+  cx.fillRect(0, 0, W, H);
+  
+  drawConnections();
+  pts.forEach(p => { p.update(); p.draw(); });
+  
+  requestAnimationFrame(frame);
+}
+
+frame();
+
+/* ─ Form helpers ─ */
+function toggleP(){
+  const f=document.getElementById('pf'),i=document.getElementById('pi');
+  f.type=f.type==='password'?'text':'password';
+  i.className=f.type==='password'?'bi bi-eye':'bi bi-eye-slash';
+}
+function fill(e,p){
+  const ef=document.querySelector('input[name="email"]'),pf=document.getElementById('pf');
+  ef.value='';pf.value='';type(ef,e,()=>type(pf,p));
+}
+function type(el,txt,cb){el.focus();let i=0;const t=setInterval(()=>{el.value+=txt[i++];if(i>=txt.length){clearInterval(t);if(cb)setTimeout(cb,80);}},36);}
+document.getElementById('lf').addEventListener('submit',()=>{
+  const b=document.getElementById('sb');b.classList.add('ld');
+  setTimeout(()=>b.classList.remove('ld'),3000);
+});
+</script>
+</body>
+</html>
