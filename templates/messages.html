@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_attachments.html" import attach_input, attach_styles, attach_script %}
 {% block title %}Messages{% endblock %}
 {% block page_title %}Messages{% endblock %}
 
@@ -9,6 +10,7 @@
 {% endblock %}
 
 {% block extra_head %}
+{{ attach_styles() }}
 <style>
   .msg-layout { display:grid; grid-template-columns:250px 1fr; gap:20px; align-items:start; }
   @media(max-width:820px){ .msg-layout{grid-template-columns:1fr} }
@@ -163,6 +165,10 @@
                 {% if t.count > 1 %}
                 <span class="msg-count-pill">{{ t.count }}</span>
                 {% endif %}
+                {% if t.has_files %}
+                <i class="bi bi-paperclip" style="color:var(--mt);font-size:12px"
+                   title="Has attachments"></i>
+                {% endif %}
               </div>
               <div class="msg-subject">{{ t.root.subject }}</div>
               {% if t.snippet %}<div class="msg-snippet">{{ t.snippet }}</div>{% endif %}
@@ -223,7 +229,7 @@
       <button class="modal-close" onclick="closeModal('composeModal')">&times;</button>
     </div>
     <div class="modal-body compose-body">
-      <form method="POST" action="{{ url_for('messages_send') }}">
+      <form method="POST" action="{{ url_for('messages_send') }}" enctype="multipart/form-data">
         <div class="fg">
           <label class="form-label">To</label>
           <select class="form-sel" name="recipient_id" required>
@@ -270,6 +276,7 @@
         <div class="fg">
           <label class="form-label">Message</label>
           <textarea class="form-ctrl" name="body" placeholder="Write your message here…" required></textarea>
+          {{ attach_input('attachments', 'Attach photos or documents') }}
         </div>
         <div class="df g8" style="margin-top:20px">
           <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
@@ -282,4 +289,8 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ attach_script() }}
 {% endblock %}

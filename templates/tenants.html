@@ -161,7 +161,7 @@
             </td>
             <td>
               {% if t.role == 'Tenant' %}
-                <div class="fw6" style="font-size:14px;">{{ fmt(t.monthly_rent) if t.monthly_rent else '—' }}</div>
+                <div class="fw6" style="font-size:14px;">{{ fmt(t.annual_rent) if t.annual_rent else '—' }}</div>
                 {% if t.invoice_status != '—' %}
                   <span class="badge b-{{ t.invoice_status }}" style="margin-top:4px;">{{ t.invoice_status|title }}</span>
                 {% endif %}
@@ -346,8 +346,8 @@
               </select>
             </div>
             <div class="fg">
-              <label class="form-label">Monthly Rent (₦)</label>
-              <input class="form-ctrl" type="number" name="monthly_rent" placeholder="0" min="0"/>
+              <label class="form-label">Annual Rent (₦)</label>
+              <input class="form-ctrl" type="number" name="annual_rent" placeholder="0" min="0"/>
             </div>
           </div>
           <div class="fg2">
@@ -445,8 +445,8 @@
               </select>
             </div>
             <div class="fg">
-              <label class="form-label">Monthly Rent (₦)</label>
-              <input class="form-ctrl" type="number" name="monthly_rent" id="editRent" placeholder="0" min="0"/>
+              <label class="form-label">Annual Rent (₦)</label>
+              <input class="form-ctrl" type="number" name="annual_rent" id="editRent" placeholder="0" min="0"/>
             </div>
           </div>
         </div>
@@ -599,7 +599,7 @@ async function openEditModal(buttonElement) {
   const deptEl = document.getElementById('editDepartment');
   if (deptEl && t.department) deptEl.value = t.department;
   const rentEl = document.getElementById('editRent');
-  if (rentEl) rentEl.value = t.monthly_rent || '';
+  if (rentEl) rentEl.value = t.annual_rent || '';
 
   toggleTenancySection(t.role, 'edit');
 

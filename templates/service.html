@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_attachments.html" import attach_input, attach_list, attach_styles, attach_script %}
 {% block title %}Service Requests{% endblock %}
 {% block page_title %}{% if role=='Tenant' %}Report an Issue{% else %}Service Requests{% endif %}{% endblock %}
 
@@ -9,6 +10,7 @@
 {% endblock %}
 
 {% block extra_head %}
+{{ attach_styles() }}
 <style>
   /* Summary Grid */
   .sr-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
@@ -108,6 +110,11 @@
             <span><i class="bi bi-calendar3"></i> {{ t.date_raised.strftime('%b %d, %Y') if t.date_raised else '-' }}</span>
           </div>
 
+          {% set reported = attachments_for('ticket', t.id, 'attachment') %}
+          {% set proof    = attachments_for('ticket', t.id, 'completion_proof') %}
+          {{ attach_list(reported, title='Reported with', compact=True) }}
+          {{ attach_list(proof, title='Proof of completion', compact=True) }}
+
           {% if t.technician %}
             <div style="font-size:12px;color:var(--nv);font-weight:600;margin-top:6px">
               <i class="bi bi-wrench"></i> Assigned: {{ t.technician }}
@@ -120,6 +127,40 @@
           {% endif %}
         </div>
         
+        {# Proof-of-completion modal for this ticket #}
+        {% if (role == 'Landlord' or (role == 'Admin' and has_perm('edit_maintenance'))) and t.status != 'resolved' %}
+        <div class="modal-ov" id="resolve_{{ t.id }}" onclick="event.stopPropagation()">
+          <div class="modal-box" style="max-width:520px">
+            <div class="modal-hdr">
+              <span class="modal-title">Close {{ t.ticket_number }}</span>
+              <button class="modal-close" onclick="closeModal('resolve_{{ t.id }}')">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p style="font-size:12.5px;color:var(--mt);margin-bottom:14px;line-height:1.6">
+                Attach a photo or document showing the work is finished. This is kept
+                on the request as the record of completion.
+              </p>
+              <form method="POST" action="{{ url_for('resolve_ticket', ticket_id=t.id) }}"
+                    enctype="multipart/form-data">
+                <div class="fg">
+                  <label class="form-label">What was done? <span style="font-weight:400;font-size:10px">(optional)</span></label>
+                  <textarea class="form-ctrl" name="completion_note" rows="2"
+                            maxlength="250" placeholder="e.g. Replaced the mixer tap and tested for leaks"></textarea>
+                </div>
+                {{ attach_input('proof', 'Attach proof of completion') }}
+                <div class="df g8" style="margin-top:20px">
+                  <button type="button" class="btn-ghost" style="flex:1;justify-content:center"
+                          onclick="closeModal('resolve_{{ t.id }}')">Cancel</button>
+                  <button type="submit" class="btn-cr" style="flex:1;justify-content:center">
+                    <i class="bi bi-check-lg"></i> Mark Resolved
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
         <div class="df g8 ticket-actions" style="flex-shrink:0;" onclick="event.stopPropagation()">
           <span class="badge b-{{ t.status }}" style="padding:6px 12px;font-size:12px">{{ t.status }}</span>
           
@@ -128,9 +169,9 @@
           {% endif %}
           
           {% if (role == 'Landlord' or (role == 'Admin' and has_perm('edit_maintenance'))) and t.status != 'resolved' %}
-          <form method="POST" action="{{ url_for('resolve_ticket',ticket_id=t.id) }}" style="display:inline">
-            <button type="submit" class="btn-ghost sm"><i class="bi bi-check-lg"></i> Resolve</button>
-          </form>
+          <button class="btn-ghost sm" onclick="openModal('resolve_{{ t.id }}')">
+            <i class="bi bi-check-lg"></i> Resolve
+          </button>
           {% endif %}
 
           {% if role == 'Tenant' and t.status == 'resolved' and t.technician %}
@@ -344,7 +385,7 @@
       <button class="modal-close" onclick="closeModal('newSRModal')">&times;</button>
     </div>
     <div class="modal-body">
-      <form method="POST" action="{{ url_for('submit_service') }}">
+      <form method="POST" action="{{ url_for('submit_service') }}" enctype="multipart/form-data">
         <div class="fg">
           <label class="form-label">Issue Title</label>
           <input class="form-ctrl" name="title" required/>
@@ -387,10 +428,15 @@
         <div class="fg">
           <label class="form-label">Description</label>
           <textarea class="form-ctrl" name="description" rows="3"></textarea>
+          {{ attach_input('attachments', 'Attach photos of the problem') }}
         </div>
         <button type="submit" class="btn-cr" style="width:100%">Submit Request</button>
       </form>
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ attach_script() }}
 {% endblock %}

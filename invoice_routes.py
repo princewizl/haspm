@@ -563,7 +563,7 @@ def api_invoice_tenants(app):
                 "email":        t.email,
                 "unit_id":      active.unit_id      if active else None,
                 "unit_number":  active.unit.unit_number if active and active.unit else None,
-                "monthly_rent": active.monthly_rent if active else 0,
+                "annual_rent": active.annual_rent if active else 0,
                 "property":     active.unit.prop.name if active and active.unit and active.unit.prop else None,
             })
         return jsonify(data)

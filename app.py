@@ -11,6 +11,7 @@ from flask import (Flask, render_template, redirect, url_for, Response,
                    session, request, flash, jsonify, send_file, abort)
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 import zipfile
 import mimetypes
 import csv
@@ -26,7 +27,7 @@ from report_routes import register_report_routes
 from message_routes import register_message_routes
 from permissions import register_permissions, has_perm, dept_required, current_dept, DEPARTMENTS
 from mailer import mail, send_test_email
-from models import db, User, Property, PropertyImage, Unit, Tenancy, Invoice, Transaction, Ticket, TenantDocument, RentLedger, Expense, LandlordPayout, NotificationLog, BankTransferClaim, Message, TechnicianRating
+from models import db, User, Property, PropertyImage, Unit, Tenancy, Invoice, Transaction, Ticket, TenantDocument, RentLedger, Expense, LandlordPayout, NotificationLog, BankTransferClaim, Message, TechnicianRating, Attachment
 
 # ─────────────────────────────────────────────
 #  APP CONFIG
@@ -98,6 +99,23 @@ def _load_paystack_config():
             pass
 
 _load_paystack_config()
+# ── Company commission (persisted in company_config.json) ─────────────
+# Default share of collections that belongs to Hearts & Sleeves. Individual
+# properties may override it; the remainder always goes to the landlord.
+COMPANY_CONFIG_FILE = os.path.join(DATA_DIR, "company_config.json")
+
+def _load_company_config():
+    if os.path.exists(COMPANY_CONFIG_FILE):
+        try:
+            with open(COMPANY_CONFIG_FILE) as f:
+                for k, v in json.load(f).items():
+                    app.config[k] = v
+        except Exception:
+            pass
+
+_load_company_config()
+app.config.setdefault("DEFAULT_COMMISSION_PCT", 0.0)
+
 app.config.setdefault("PAYSTACK_PUBLIC_KEY",  "")
 app.config.setdefault("PAYSTACK_SECRET_KEY",  "")
 
@@ -342,7 +360,7 @@ def properties():
                     "id":     active.tenant_id,
                     "name":   active.tenant.name,
                     "unit":   unit.unit_number,
-                    "rent":   active.monthly_rent,
+                    "rent":   active.annual_rent,
                     "due":    inv.due_date.strftime("%b %d, %Y") if inv else "—",
                     "status": inv.status if inv else "—",
                 })
@@ -368,11 +386,23 @@ def add_property():
     description = request.form.get("description", "").strip()
     num_units   = int(request.form.get("units", 0) or 0)
     unit_rent   = float(request.form.get("unit_rent", 0) or 0)
+    pattern     = request.form.get("unit_naming_pattern", "").strip() or None
+
+    # Blank means "inherit the global default from Settings".
+    raw_pct     = request.form.get("commission_pct", "").strip()
+    commission  = None
+    if raw_pct != "":
+        try:
+            commission = max(0.0, min(100.0, float(raw_pct)))
+        except ValueError:
+            commission = None
 
     prop = Property(
         name=name, address=address, type=prop_type,
         description=description, avg_rent=unit_rent,
         landlord_id=session["user_id"],
+        commission_pct=commission,
+        unit_naming_pattern=pattern,
     )
     db.session.add(prop)
     db.session.flush() # Flush to get the prop.id
@@ -393,15 +423,22 @@ def add_property():
             if url.strip():
                 db.session.add(PropertyImage(property_id=prop.id, image_url=url.strip()))
 
-    # Auto-generate units
+    # Auto-generate units using the property's naming pattern, e.g.
+    # "Block A - Unit {n}" -> "Block A - Unit 1", "Block A - Unit 2", ...
     for i in range(1, num_units + 1):
-        unit_num = f"U{i:02d}"
         db.session.add(Unit(
-            unit_number=unit_num, rent_amount=unit_rent,
+            unit_number=prop.format_unit_name(i), rent_amount=unit_rent,
             is_occupied=False, property_id=prop.id,
         ))
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not create the property: that unit naming pattern produced "
+              "duplicate unit names.", "danger")
+        return redirect(url_for("properties"))
+
     flash(f"Property '{name}' added successfully with {num_units} unit(s)!", "success")
     return redirect(url_for("properties"))
 
@@ -423,6 +460,44 @@ def edit_property(prop_id):
     prop.description = request.form.get("description", prop.description).strip()
     prop.avg_rent    = float(request.form.get("avg_rent", prop.avg_rent) or prop.avg_rent)
 
+    if "unit_naming_pattern" in request.form:
+        prop.unit_naming_pattern = request.form.get("unit_naming_pattern", "").strip() or None
+
+    # Only Management sets the commission rate; a landlord cannot change their
+    # own cut. Blank clears the override and falls back to the global default.
+    if "commission_pct" in request.form and has_perm("manage_properties"):
+        raw = request.form.get("commission_pct", "").strip()
+        if raw == "":
+            prop.commission_pct = None
+        else:
+            try:
+                prop.commission_pct = max(0.0, min(100.0, float(raw)))
+            except ValueError:
+                flash("Commission must be a number between 0 and 100 - left unchanged.",
+                      "danger")
+
+    # Growing the unit count adds units named from the pattern. Shrinking it is
+    # not done here: units carry tenancy and invoice history.
+    if request.form.get("units"):
+        try:
+            wanted = int(request.form["units"])
+        except ValueError:
+            wanted = prop.total_units
+        current = prop.total_units
+        if wanted > current:
+            for _ in range(wanted - current):
+                db.session.add(Unit(
+                    unit_number=prop.next_unit_name(),
+                    rent_amount=prop.avg_rent, is_occupied=False,
+                    property_id=prop.id,
+                ))
+                db.session.flush()
+            flash(f"Added {wanted - current} unit(s) to '{prop.name}'.", "info")
+        elif wanted < current:
+            flash(f"'{prop.name}' still has {current} units. Units are not removed "
+                  "automatically because they carry tenancy and invoice history.",
+                  "info")
+
     if "image" in request.files:
         new_url = save_property_image(request.files["image"])
         if new_url:
@@ -432,7 +507,14 @@ def edit_property(prop_id):
     if ext_url:
         prop.image_url = ext_url
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Could not save: that would create two units with the same name "
+              "in this property.", "danger")
+        return redirect(url_for("properties"))
+
     flash(f"Property '{prop.name}' updated.", "success")
     return redirect(url_for("properties"))
 
@@ -501,7 +583,7 @@ def tenants():
 
             "property_name": active.unit.prop.name if active else "—",
             "unit_number": active.unit.unit_number if active else "—",
-            "monthly_rent": active.monthly_rent if active else 0,
+            "annual_rent": active.annual_rent if active else 0,
             "due_date": inv.due_date.strftime("%b %d, %Y") if inv and inv.due_date else "—",
             "invoice_status": inv.status if inv else "—",
         })
@@ -562,16 +644,16 @@ def add_tenant():
     if role == "Tenant":
         property_id = request.form.get("property_id")
         unit_id = request.form.get("unit_id")
-        monthly_rent = request.form.get("monthly_rent")
+        annual_rent = request.form.get("annual_rent")
 
-        if property_id and unit_id and monthly_rent:
+        if property_id and unit_id and annual_rent:
             unit = Unit.query.filter_by(id=unit_id, property_id=property_id, is_occupied=False).first()
             if unit:
                 unit.is_occupied = True
                 new_tenancy = Tenancy(
                     tenant_id=new_user.id,
                     unit_id=unit.id,
-                    monthly_rent=float(monthly_rent),
+                    annual_rent=float(annual_rent),
                     is_active=True,
                     start_date=date.today()
                 )
@@ -615,7 +697,7 @@ def edit_tenant(user_id):
 
     property_id = request.form.get("property_id")
     unit_id     = request.form.get("unit_id")
-    monthly_rent = request.form.get("monthly_rent")
+    annual_rent = request.form.get("annual_rent")
     start_date   = request.form.get("start_date")
     end_date     = request.form.get("end_date")
 
@@ -647,7 +729,7 @@ def edit_tenant(user_id):
 
     active_tenancy = Tenancy.query.filter_by(tenant_id=user.id, is_active=True).first()
 
-    if role == "Tenant" and property_id and unit_id and monthly_rent:
+    if role == "Tenant" and property_id and unit_id and annual_rent:
         unit = Unit.query.filter_by(
             id=unit_id,
             property_id=property_id,
@@ -671,14 +753,14 @@ def edit_tenant(user_id):
             tenancy = Tenancy(
                 tenant_id=user.id,
                 unit_id=unit.id,
-                monthly_rent=float(monthly_rent),
+                annual_rent=float(annual_rent),
                 is_active=True,
                 start_date=date.fromisoformat(start_date) if start_date else date.today(),
                 end_date=date.fromisoformat(end_date) if end_date else None
             )
             db.session.add(tenancy)
         else:
-            tenancy.monthly_rent = float(monthly_rent)
+            tenancy.annual_rent = float(annual_rent)
             if start_date:
                 tenancy.start_date = date.fromisoformat(start_date)
             tenancy.end_date = date.fromisoformat(end_date) if end_date else None
@@ -759,25 +841,52 @@ def delete_tenant(user_id):
 def user_profile(user_id):
     u = User.query.get_or_404(user_id)
 
-    # Tenancy
-    tenancy      = Tenancy.query.filter_by(tenant_id=u.id, is_active=True).first()
-    past_tenancies = (Tenancy.query
-                      .filter_by(tenant_id=u.id, is_active=False)
-                      .order_by(Tenancy.end_date.desc()).all())
+    # A profile only loads what its subject can actually have. Landlords and
+    # staff have no tenancy, no rent invoices and no rent ledger, so those
+    # queries are skipped entirely rather than rendering empty rent sections.
+    is_tenant   = u.role == "Tenant"
+    is_landlord = u.role == "Landlord"
+    is_staff    = u.role == "Admin"
 
-    # Financial
-    invoices     = (Invoice.query.filter_by(tenant_id=u.id)
+    tenancy = past_tenancies = None
+    invoices = transactions = tickets = documents = []
+    owned_properties = []
+    landlord_stats   = None
+    staff_activity   = None
+
+    if is_tenant:
+        tenancy = Tenancy.query.filter_by(tenant_id=u.id, is_active=True).first()
+        past_tenancies = (Tenancy.query
+                          .filter_by(tenant_id=u.id, is_active=False)
+                          .order_by(Tenancy.end_date.desc()).all())
+        invoices = (Invoice.query.filter_by(tenant_id=u.id)
                     .order_by(Invoice.due_date.desc()).all())
-    transactions = (Transaction.query.filter_by(tenant_id=u.id)
-                    .order_by(Transaction.date.desc()).all())
+        transactions = (Transaction.query.filter_by(tenant_id=u.id)
+                        .order_by(Transaction.date.desc()).all())
+        tickets = (Ticket.query.filter_by(tenant_id=u.id)
+                   .order_by(Ticket.date_raised.desc()).all())
+        documents = (TenantDocument.query.filter_by(tenant_id=u.id)
+                     .order_by(TenantDocument.uploaded_at.desc()).all())
 
-    # Tickets
-    tickets = (Ticket.query.filter_by(tenant_id=u.id)
-               .order_by(Ticket.date_raised.desc()).all())
+    elif is_landlord:
+        owned_properties = (Property.query.filter_by(landlord_id=u.id)
+                            .order_by(Property.name).all())
+        prop_ids = [p.id for p in owned_properties]
+        # Maintenance raised anywhere on their portfolio.
+        if prop_ids:
+            tickets = (Ticket.query.filter(Ticket.property_id.in_(prop_ids))
+                       .order_by(Ticket.date_raised.desc()).limit(25).all())
+        from finance_routes import _landlord_earnings
+        landlord_stats = _landlord_earnings(u.id)
 
-    # Documents
-    documents = (TenantDocument.query.filter_by(tenant_id=u.id)
-                 .order_by(TenantDocument.uploaded_at.desc()).all())
+    elif is_staff:
+        # What this staff member handles, not what they owe.
+        staff_activity = dict(
+            department=u.department or "Management",
+            assigned_tickets=Ticket.query.filter(
+                Ticket.technician == u.name).order_by(
+                Ticket.date_raised.desc()).limit(25).all(),
+        )
 
     # Notification history (Admin-only)
     notif_logs = []
@@ -785,7 +894,7 @@ def user_profile(user_id):
         notif_logs = (NotificationLog.query.filter_by(tenant_id=u.id)
                       .order_by(NotificationLog.sent_at.desc()).limit(20).all())
 
-    # Summary stats
+    # Rent summary - tenants only; the template hides these for other roles.
     total_charged = sum(inv.amount for inv in invoices)
     total_paid    = sum(t.amount for t in transactions if t.status == "confirmed")
     balance       = total_charged - total_paid
@@ -803,6 +912,12 @@ def user_profile(user_id):
         tickets       = tickets,
         documents     = documents,
         notif_logs    = notif_logs,
+        is_tenant     = is_tenant,
+        is_landlord   = is_landlord,
+        is_staff      = is_staff,
+        owned_properties = owned_properties,
+        landlord_stats   = landlord_stats,
+        staff_activity   = staff_activity,
         total_charged = total_charged,
         total_paid    = total_paid,
         balance       = balance,
@@ -884,9 +999,18 @@ def submit_service():
     )
     
     db.session.add(new_ticket)
+    db.session.flush()      # need the id before attaching files
+
+    saved, errors = save_attachments(
+        request.files.getlist("attachments"),
+        Attachment.PARENT_TICKET, new_ticket.id,
+        kind=Attachment.KIND_ATTACHMENT)
     db.session.commit()
-    
-    flash("Service request submitted successfully!", "success")
+
+    for e in errors:
+        flash(e, "danger")
+    flash("Service request submitted successfully!"
+          + (f" {saved} photo/file(s) attached." if saved else ""), "success")
     return redirect(url_for("service"))
 
 
@@ -926,10 +1050,30 @@ def resolve_ticket(ticket_id):
         flash("Access denied. You can only resolve tickets on your own properties.", "danger")
         return redirect(url_for("service"))
 
+    note  = request.form.get("completion_note", "").strip()
+    files = request.files.getlist("proof")
+
+    saved, errors = save_attachments(
+        files, Attachment.PARENT_TICKET, ticket.id,
+        kind=Attachment.KIND_PROOF, caption=note or None)
+    for e in errors:
+        flash(e, "danger")
+
+    # Refuse to close a job with no evidence at all - that is the point of the
+    # proof-of-completion attachment.
+    already = attachments_for(Attachment.PARENT_TICKET, ticket.id,
+                              kind=Attachment.KIND_PROOF)
+    if not saved and not already:
+        flash("Attach a photo or document as proof of completion before closing "
+              f"#{ticket.ticket_number}.", "danger")
+        db.session.rollback()
+        return redirect(url_for("service"))
+
     ticket.status = "resolved"
     ticket.date_resolved = datetime.utcnow()
     db.session.commit()
-    flash(f"Ticket #{ticket.ticket_number} marked as resolved!", "success")
+    flash(f"Ticket #{ticket.ticket_number} marked as resolved"
+          + (f" with {saved} proof file(s)." if saved else "."), "success")
     return redirect(url_for("service"))
 
 
@@ -1281,6 +1425,153 @@ def delete_document(doc_id):
     flash("Document deleted.", "success")
     return redirect(url_for("documents", tenant_id=tenant_id))
 
+
+# ─────────────────────────────────────────────
+#  ATTACHMENTS  (messages + service requests)
+# ─────────────────────────────────────────────
+ATTACH_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "webp", "gif"}
+MAX_ATTACH_BYTES  = 10 * 1024 * 1024   # 10 MB, same ceiling as documents
+MAX_ATTACH_FILES  = 5                  # per message / per upload
+
+
+def allowed_attachment_file(filename):
+    return _has_ext(filename, ATTACH_EXTENSIONS)
+
+
+def _attach_folder():
+    folder = app.config.get(
+        "ATTACH_UPLOAD_FOLDER",
+        os.path.join(os.path.dirname(app.config["DOCS_UPLOAD_FOLDER"]), "attachments"))
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def save_attachments(files, parent_type, parent_id, kind=None, caption=None):
+    """Persist uploaded files against a parent. Returns (saved, [errors])."""
+    kind   = kind or Attachment.KIND_ATTACHMENT
+    folder = _attach_folder()
+    saved, errors = 0, []
+
+    for f in (files or [])[:MAX_ATTACH_FILES]:
+        if not f or not f.filename:
+            continue
+        if not allowed_attachment_file(f.filename):
+            errors.append(f"{f.filename}: only PDF, JPG, PNG, WEBP and GIF are allowed.")
+            continue
+
+        data = f.read()
+        if len(data) > MAX_ATTACH_BYTES:
+            errors.append(f"{f.filename}: larger than 10 MB.")
+            continue
+        if not data:
+            continue
+
+        original = secure_filename(f.filename)
+        ext      = original.rsplit(".", 1)[1].lower()
+        stored   = f"{uuid.uuid4().hex}.{ext}"
+        with open(os.path.join(folder, stored), "wb") as out:
+            out.write(data)
+
+        mime, _ = mimetypes.guess_type(original)
+        db.session.add(Attachment(
+            parent_type=parent_type, parent_id=parent_id, kind=kind,
+            original_filename=original, stored_filename=stored,
+            file_size=len(data), mime_type=mime or "application/octet-stream",
+            caption=(caption or None),
+            uploaded_by_id=session.get("user_id"),
+        ))
+        saved += 1
+
+    return saved, errors
+
+
+def attachments_for(parent_type, parent_id, kind=None):
+    q = Attachment.query.filter_by(parent_type=parent_type, parent_id=parent_id)
+    if kind:
+        q = q.filter_by(kind=kind)
+    return q.order_by(Attachment.uploaded_at.asc()).all()
+
+
+app.jinja_env.globals["attachments_for"] = attachments_for
+
+
+def _can_reach_attachment(att):
+    """Only people who can see the parent record may see its files."""
+    uid  = session.get("user_id")
+    role = session.get("role")
+    if not uid:
+        return False
+
+    if att.parent_type == Attachment.PARENT_MESSAGE:
+        msg = Message.query.get(att.parent_id)
+        if not msg:
+            return False
+        # A file on a reply belongs to everyone in that thread.
+        root = Message.query.get(msg.parent_id) if msg.parent_id else msg
+        parties = {msg.sender_id, msg.recipient_id}
+        if root:
+            parties |= {root.sender_id, root.recipient_id}
+        return uid in parties
+
+    if att.parent_type == Attachment.PARENT_TICKET:
+        tkt = Ticket.query.get(att.parent_id)
+        if not tkt:
+            return False
+        if tkt.tenant_id == uid:
+            return True
+        if role == "Admin":
+            return has_perm("view_maintenance_full") or has_perm("view_maintenance_status")
+        if role == "Landlord":
+            return tkt.prop is not None and tkt.prop.landlord_id == uid
+        return False
+
+    return False
+
+
+@app.route("/attachments/<int:att_id>")
+@login_required
+def view_attachment(att_id):
+    att = Attachment.query.get_or_404(att_id)
+    if not _can_reach_attachment(att):
+        abort(403)
+    path = os.path.join(_attach_folder(), att.stored_filename)
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype=att.mime_type, as_attachment=False,
+                     download_name=att.original_filename)
+
+
+@app.route("/attachments/<int:att_id>/download")
+@login_required
+def download_attachment(att_id):
+    att = Attachment.query.get_or_404(att_id)
+    if not _can_reach_attachment(att):
+        abort(403)
+    path = os.path.join(_attach_folder(), att.stored_filename)
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype=att.mime_type, as_attachment=True,
+                     download_name=att.original_filename)
+
+
+@app.route("/attachments/<int:att_id>/delete", methods=["POST"])
+@login_required
+def delete_attachment(att_id):
+    att = Attachment.query.get_or_404(att_id)
+    # Only the uploader, or Management, can remove a file.
+    if att.uploaded_by_id != session.get("user_id") and not (
+            session.get("role") == "Admin" and has_perm("manage_properties")):
+        abort(403)
+
+    path = os.path.join(_attach_folder(), att.stored_filename)
+    if os.path.exists(path):
+        os.remove(path)
+    db.session.delete(att)
+    db.session.commit()
+    flash("Attachment removed.", "success")
+    return redirect(request.referrer or url_for("dashboard"))
+
+
 # ─────────────────────────────────────────────
 #  SETTINGS
 # ─────────────────────────────────────────────
@@ -1293,6 +1584,8 @@ def settings():
                 .order_by(NotificationLog.sent_at.desc())
                 .limit(50).all())
     return render_template("settings.html", role=session["role"],
+                           default_commission_pct=app.config.get("DEFAULT_COMMISSION_PCT", 0.0),
+                           commission_properties=Property.query.order_by(Property.name).all(),
                            email_cfg={
                                "MAIL_SERVER":         app.config.get("MAIL_SERVER", ""),
                                "MAIL_PORT":           app.config.get("MAIL_PORT", 587),
@@ -1383,6 +1676,26 @@ def save_bank_config():
     with open(BANK_CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
     flash("Bank account details saved.", "success")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/commission", methods=["POST"])
+@dept_required("manage_settings")
+def save_commission_config():
+    raw = request.form.get("default_commission_pct", "").strip()
+    try:
+        pct = max(0.0, min(100.0, float(raw or 0)))
+    except ValueError:
+        flash("Commission must be a number between 0 and 100.", "danger")
+        return redirect(url_for("settings"))
+
+    app.config["DEFAULT_COMMISSION_PCT"] = pct
+    with open(COMPANY_CONFIG_FILE, "w") as f:
+        json.dump({"DEFAULT_COMMISSION_PCT": pct}, f, indent=2)
+
+    inheriting = Property.query.filter(Property.commission_pct.is_(None)).count()
+    flash(f"Default commission set to {pct:g}%. {inheriting} propert"
+          f"{'y' if inheriting == 1 else 'ies'} use this default.", "success")
     return redirect(url_for("settings"))
 
 

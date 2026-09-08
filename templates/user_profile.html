@@ -180,7 +180,7 @@
           {% set prop = tenancy.unit.prop if tenancy.unit else None %}
           <div class="info-row"><span class="info-label">Property</span><span class="info-val">{{ prop.name if prop else '—' }}</span></div>
           <div class="info-row"><span class="info-label">Unit</span><span class="info-val">{{ tenancy.unit.unit_number if tenancy.unit else '—' }}</span></div>
-          <div class="info-row"><span class="info-label">Monthly Rent</span><span class="info-val text-nv">{{ fmt(tenancy.monthly_rent) }}</span></div>
+          <div class="info-row"><span class="info-label">Annual Rent</span><span class="info-val text-nv">{{ fmt(tenancy.annual_rent) }}</span></div>
           <div class="info-row"><span class="info-label">Move-in Date</span><span class="info-val">{{ tenancy.start_date.strftime('%b %d, %Y') }}</span></div>
           {% set days_left = (tenancy.end_date - today).days if tenancy.end_date else None %}
           <div class="info-row"><span class="info-label">Lease End</span>
@@ -248,6 +248,10 @@
 
   {# ── RIGHT COLUMN ───────────────────────────────────────────────── #}
   <div>
+
+    {# Rent history only exists for tenants. Landlords and staff never hold a
+       tenancy, so these sections are omitted entirely rather than shown empty. #}
+    {% if is_tenant %}
 
     {# Invoice History #}
     <div class="section-label"><i class="bi bi-receipt" style="color:var(--nv)"></i> Invoice History</div>
@@ -344,6 +348,140 @@
       {% endif %}
     </div>
 
+    {% endif %}{# /is_tenant #}
+
+    {# --- LANDLORD --- #}
+    {% if is_landlord %}
+
+    <div class="section-label"><i class="bi bi-cash-coin" style="color:var(--gr)"></i> Earnings</div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body">
+        {% if landlord_stats %}
+        <div class="info-row">
+          <span class="info-label">Collected on their properties</span>
+          <span class="info-val">{{ fmt(landlord_stats.gross_collected) }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Hearts &amp; Sleeves share</span>
+          <span class="info-val" style="color:var(--cr)">&minus; {{ fmt(landlord_stats.company_share) }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Property expenses</span>
+          <span class="info-val" style="color:var(--cr)">&minus; {{ fmt(landlord_stats.total_expenses) }}</span>
+        </div>
+        <div class="info-row" style="border-top:1px solid var(--bd);padding-top:10px;margin-top:4px">
+          <span class="info-label" style="font-weight:700;color:var(--tx)">Net to landlord</span>
+          <span class="info-val text-nv" style="font-weight:700">{{ fmt(landlord_stats.net) }}</span>
+        </div>
+        {% if landlord_stats.pending_payouts %}
+        <div class="info-row">
+          <span class="info-label">Pending payouts</span>
+          <span class="info-val">{{ fmt(landlord_stats.pending_payouts) }}</span>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="empty-state"><i class="bi bi-cash-coin"></i>No earnings yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="section-label"><i class="bi bi-buildings" style="color:var(--nv)"></i> Properties</div>
+    <div class="card" style="margin-bottom:20px">
+      {% if owned_properties %}
+      <div class="tw">
+        <table class="ht">
+          <thead>
+            <tr><th>Property</th><th>Units</th><th>Occupied</th><th>H&amp;S Share</th><th>Landlord Keeps</th></tr>
+          </thead>
+          <tbody>
+            {% for pr in owned_properties %}
+            <tr>
+              <td class="fw6">{{ pr.name }}</td>
+              <td>{{ pr.total_units }}</td>
+              <td style="color:var(--gr);font-weight:600">{{ pr.occupied_units }}</td>
+              <td>{{ "%g"|format(pr.effective_commission_pct) }}%</td>
+              <td class="fw6">{{ "%g"|format(100 - pr.effective_commission_pct) }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state"><i class="bi bi-buildings"></i>No properties registered.</div>
+      {% endif %}
+    </div>
+
+    <div class="section-label"><i class="bi bi-tools" style="color:var(--wn)"></i> Maintenance on Their Properties</div>
+    <div class="card" style="margin-bottom:20px">
+      {% if tickets %}
+      <div class="tw">
+        <table class="ht">
+          <thead><tr><th>Ref</th><th>Title</th><th>Property</th><th>Status</th><th>Raised</th></tr></thead>
+          <tbody>
+            {% for tk in tickets %}
+            <tr>
+              <td class="fw6 text-nv" style="font-size:12.5px;white-space:nowrap">{{ tk.ticket_number }}</td>
+              <td style="font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tk.title }}</td>
+              <td style="font-size:12.5px">{{ tk.prop.name if tk.prop else '-' }}</td>
+              <td><span class="badge b-{{ tk.status | replace(' ','-') }}" style="font-size:10.5px">{{ tk.status }}</span></td>
+              <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ tk.date_raised.strftime('%b %d, %Y') if tk.date_raised else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state"><i class="bi bi-tools"></i>No maintenance raised.</div>
+      {% endif %}
+    </div>
+
+    {% endif %}{# /is_landlord #}
+
+    {# --- STAFF --- #}
+    {% if is_staff %}
+    <div class="section-label"><i class="bi bi-person-badge" style="color:var(--nv)"></i> Staff Details</div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body">
+        <div class="info-row">
+          <span class="info-label">Department</span>
+          <span class="info-val text-nv">{{ staff_activity.department if staff_activity else 'Management' }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Account status</span>
+          <span class="info-val">{{ 'Active' if u.is_active else 'Deactivated' }}</span>
+        </div>
+        <p style="font-size:12px;color:var(--mt);margin-top:12px;line-height:1.6">
+          Staff accounts hold no tenancy, so there is no rent, invoice or payment
+          history to show here.
+        </p>
+      </div>
+    </div>
+
+    <div class="section-label"><i class="bi bi-wrench-adjustable" style="color:var(--wn)"></i> Jobs Assigned to Them</div>
+    <div class="card" style="margin-bottom:20px">
+      {% if staff_activity and staff_activity.assigned_tickets %}
+      <div class="tw">
+        <table class="ht">
+          <thead><tr><th>Ref</th><th>Title</th><th>Property</th><th>Status</th><th>Raised</th></tr></thead>
+          <tbody>
+            {% for tk in staff_activity.assigned_tickets %}
+            <tr>
+              <td class="fw6 text-nv" style="font-size:12.5px;white-space:nowrap">{{ tk.ticket_number }}</td>
+              <td style="font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tk.title }}</td>
+              <td style="font-size:12.5px">{{ tk.prop.name if tk.prop else '-' }}</td>
+              <td><span class="badge b-{{ tk.status | replace(' ','-') }}" style="font-size:10.5px">{{ tk.status }}</span></td>
+              <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ tk.date_raised.strftime('%b %d, %Y') if tk.date_raised else '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state"><i class="bi bi-wrench-adjustable"></i>No jobs assigned.</div>
+      {% endif %}
+    </div>
+    {% endif %}{# /is_staff #}
+
     {# Notification Log (Admin only) #}
     {% if role == 'Admin' and notif_logs %}
     <div class="section-label"><i class="bi bi-bell-history" style="color:var(--mt)"></i> Notification Log</div>
@@ -413,8 +551,8 @@
         <div class="modal-section">Tenancy</div>
         <div class="fg2">
           <div class="fg">
-            <label class="form-label">Monthly Rent (₦)</label>
-            <input class="form-ctrl" type="number" name="monthly_rent" value="{{ tenancy.monthly_rent }}" min="0"/>
+            <label class="form-label">Annual Rent (₦)</label>
+            <input class="form-ctrl" type="number" name="annual_rent" value="{{ tenancy.annual_rent }}" min="0"/>
           </div>
           <div class="fg">
             <label class="form-label">Lease End Date</label>

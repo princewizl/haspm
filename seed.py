@@ -115,11 +115,11 @@ def seed():
         # ── Tenancies ──────────────────────────────────────────────────────
         today = date.today()
         tenancies = [
-            Tenancy(tenant_id=t1.id, unit_id=u_p1[0].id, monthly_rent=450000, start_date=today-timedelta(days=180), is_active=True),
-            Tenancy(tenant_id=t2.id, unit_id=u_p2[2].id, monthly_rent=320000, start_date=today-timedelta(days=90),  is_active=True),
-            Tenancy(tenant_id=t3.id, unit_id=u_p3[11].id,monthly_rent=550000, start_date=today-timedelta(days=60),  is_active=True),
-            Tenancy(tenant_id=t4.id, unit_id=u_p3[6].id, monthly_rent=620000, start_date=today-timedelta(days=120), is_active=True),
-            Tenancy(tenant_id=t5.id, unit_id=u_p4[1].id, monthly_rent=280000, start_date=today-timedelta(days=45),  is_active=True),
+            Tenancy(tenant_id=t1.id, unit_id=u_p1[0].id, annual_rent=450000, start_date=today-timedelta(days=180), is_active=True),
+            Tenancy(tenant_id=t2.id, unit_id=u_p2[2].id, annual_rent=320000, start_date=today-timedelta(days=90),  is_active=True),
+            Tenancy(tenant_id=t3.id, unit_id=u_p3[11].id,annual_rent=550000, start_date=today-timedelta(days=60),  is_active=True),
+            Tenancy(tenant_id=t4.id, unit_id=u_p3[6].id, annual_rent=620000, start_date=today-timedelta(days=120), is_active=True),
+            Tenancy(tenant_id=t5.id, unit_id=u_p4[1].id, annual_rent=280000, start_date=today-timedelta(days=45),  is_active=True),
         ]
         db.session.add_all(tenancies)
         db.session.flush()

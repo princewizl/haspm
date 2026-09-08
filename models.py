@@ -79,6 +79,16 @@ class Property(db.Model):
     avg_rent    = db.Column(db.Float, default=0)
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Share of everything collected on this property that belongs to Hearts &
+    # Sleeves; the remainder is the landlord's. NULL means "use the global
+    # default from Settings", so changing that default moves every property
+    # that has not been given an explicit rate.
+    commission_pct = db.Column(db.Float, nullable=True)
+
+    # Template used when naming units, e.g. "Block A - Unit {n}" or "Flat {n}".
+    # {n} is the unit's sequence number. Unit names are unique per property.
+    unit_naming_pattern = db.Column(db.String(120), nullable=True)
+
     # FK → landlord (User with role=Landlord or Admin)
     landlord_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     landlord    = db.relationship("User", back_populates="properties", foreign_keys=[landlord_id])
@@ -111,6 +121,55 @@ class Property(db.Model):
     def letter(self):
         return self.name[0].upper() if self.name else "?"
 
+    # ── Commission ────────────────────────────
+    DEFAULT_COMMISSION_PCT = 0.0
+
+    @property
+    def effective_commission_pct(self):
+        """This property's rate, falling back to the configured global default."""
+        if self.commission_pct is not None:
+            return self.commission_pct
+        try:
+            from flask import current_app
+            return float(current_app.config.get("DEFAULT_COMMISSION_PCT",
+                                                self.DEFAULT_COMMISSION_PCT))
+        except Exception:
+            return self.DEFAULT_COMMISSION_PCT
+
+    @property
+    def uses_default_commission(self):
+        return self.commission_pct is None
+
+    def split(self, amount):
+        """Split a collected amount into (company_share, landlord_share)."""
+        pct = max(0.0, min(100.0, self.effective_commission_pct or 0.0))
+        company = round((amount or 0) * pct / 100.0, 2)
+        return company, round((amount or 0) - company, 2)
+
+    # ── Unit naming ───────────────────────────
+    DEFAULT_UNIT_PATTERN = "Unit {n}"
+
+    @property
+    def effective_unit_pattern(self):
+        return (self.unit_naming_pattern or "").strip() or self.DEFAULT_UNIT_PATTERN
+
+    def format_unit_name(self, n):
+        """Render the naming pattern for sequence number `n`."""
+        pattern = self.effective_unit_pattern
+        if "{n}" not in pattern:
+            pattern = pattern.rstrip() + " {n}"
+        return pattern.replace("{n}", str(n)).strip()
+
+    def next_unit_name(self):
+        """First name from the pattern that is not already taken here."""
+        taken = {u.unit_number for u in self.units}
+        n = 1
+        while self.format_unit_name(n) in taken:
+            n += 1
+            if n > 9999:
+                break
+        return self.format_unit_name(n)
+
     def __repr__(self):
         return f"<Property {self.name}>"
 
@@ -124,6 +183,11 @@ class PropertyImage(db.Model):
 # ─────────────────────────────────────────────
 class Unit(db.Model):
     __tablename__ = "units"
+    # A unit name only has to be unique inside its own property - "Flat 1" can
+    # exist in several buildings.
+    __table_args__ = (
+        db.UniqueConstraint("property_id", "unit_number", name="uq_unit_per_property"),
+    )
 
     id          = db.Column(db.Integer, primary_key=True)
     unit_number = db.Column(db.String(20), nullable=False)   # e.g. "A1", "3B"
@@ -160,7 +224,9 @@ class Tenancy(db.Model):
     id           = db.Column(db.Integer, primary_key=True)
     start_date   = db.Column(db.Date, nullable=False)
     end_date     = db.Column(db.Date)
-    monthly_rent = db.Column(db.Float, nullable=False)
+    # Rent is paid annually. The column was previously called monthly_rent but
+    # already held the yearly figure; migrate_v2.py renames it in place.
+    annual_rent  = db.Column(db.Float, nullable=False)
     is_active    = db.Column(db.Boolean, default=True)
     created_at   = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -439,6 +505,72 @@ class Message(db.Model):
 
     def __repr__(self):
         return f"<Message #{self.id} from #{self.sender_id} to #{self.recipient_id}>"
+
+
+# ─────────────────────────────────────────────
+#  ATTACHMENT  (files on messages and service requests)
+# ─────────────────────────────────────────────
+class Attachment(db.Model):
+    """A file hanging off a message or a service request.
+
+    Deliberately generic rather than two near-identical tables: both modules
+    need the same upload, listing and download behaviour, and the parent is
+    identified by (parent_type, parent_id).
+    """
+    __tablename__ = "attachments"
+    __table_args__ = (
+        db.Index("ix_attachment_parent", "parent_type", "parent_id"),
+    )
+
+    PARENT_MESSAGE = "message"
+    PARENT_TICKET  = "ticket"
+
+    # On a ticket, an attachment is either context from the tenant when they
+    # report the fault, or evidence from staff that the work is finished.
+    KIND_ATTACHMENT = "attachment"
+    KIND_PROOF      = "completion_proof"
+
+    id                = db.Column(db.Integer, primary_key=True)
+    parent_type       = db.Column(db.String(20), nullable=False)
+    parent_id         = db.Column(db.Integer,    nullable=False)
+    kind              = db.Column(db.String(30), nullable=False, default=KIND_ATTACHMENT)
+
+    original_filename = db.Column(db.String(255), nullable=False)
+    stored_filename   = db.Column(db.String(255), nullable=False, unique=True)
+    file_size         = db.Column(db.Integer)
+    mime_type         = db.Column(db.String(80))
+    caption           = db.Column(db.String(250))
+
+    uploaded_by_id    = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    uploaded_at       = db.Column(db.DateTime, default=datetime.utcnow)
+
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id])
+
+    @property
+    def is_image(self):
+        return (self.mime_type or "").startswith("image/")
+
+    @property
+    def file_size_str(self):
+        n = self.file_size or 0
+        if not n:
+            return "—"
+        if n < 1024:
+            return f"{n} B"
+        if n < 1024 * 1024:
+            return f"{n / 1024:.1f} KB"
+        return f"{n / (1024 * 1024):.1f} MB"
+
+    @property
+    def icon(self):
+        if self.is_image:
+            return "file-earmark-image"
+        if (self.mime_type or "").endswith("pdf"):
+            return "file-earmark-pdf"
+        return "paperclip"
+
+    def __repr__(self):
+        return f"<Attachment {self.parent_type}#{self.parent_id} {self.original_filename}>"
 
 
 # ─────────────────────────────────────────────

@@ -1,0 +1,150 @@
+{# ──────────────────────────────────────────────────────────────────
+   Shared attachment widgets, used by messages and service requests.
+   ────────────────────────────────────────────────────────────────── #}
+
+{# A file picker. Drop into any form that posts enctype="multipart/form-data". #}
+{% macro attach_input(field='attachments', label='Attach files', max=5) %}
+<div class="att-picker">
+  <label class="att-drop" for="{{ field }}Input">
+    <i class="bi bi-paperclip"></i>
+    <span class="att-drop-tx">{{ label }}</span>
+    <span class="att-drop-sub">Images or PDF &middot; up to {{ max }} files &middot; max 10&nbsp;MB each</span>
+  </label>
+  <input type="file" id="{{ field }}Input" name="{{ field }}" multiple
+         accept=".pdf,.jpg,.jpeg,.png,.webp,.gif" class="att-file"
+         onchange="attListFiles(this)"/>
+  <div class="att-chosen" id="{{ field }}Chosen"></div>
+</div>
+{% endmacro %}
+
+{# Render files already attached to a record. #}
+{% macro attach_list(items, title=None, compact=False, deletable=False) %}
+{% if items %}
+<div class="att-list {{ 'compact' if compact }}">
+  {% if title %}<div class="att-list-title">{{ title }}</div>{% endif %}
+  <div class="att-grid">
+    {% for a in items %}
+      {% if a.is_image %}
+      <a class="att-thumb" href="{{ url_for('view_attachment', att_id=a.id) }}"
+         target="_blank" rel="noopener" title="{{ a.original_filename }}">
+        <img src="{{ url_for('view_attachment', att_id=a.id) }}" alt="{{ a.original_filename }}" loading="lazy"/>
+        <span class="att-thumb-cap">{{ a.file_size_str }}</span>
+      </a>
+      {% else %}
+      <a class="att-file-card" href="{{ url_for('view_attachment', att_id=a.id) }}"
+         target="_blank" rel="noopener">
+        <i class="bi bi-{{ a.icon }}"></i>
+        <span class="att-file-meta">
+          <span class="att-file-name">{{ a.original_filename }}</span>
+          <span class="att-file-size">{{ a.file_size_str }}</span>
+        </span>
+      </a>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% set captioned = items | selectattr('caption') | list %}
+  {% if captioned %}
+    {% for a in captioned %}
+    <div class="att-caption"><i class="bi bi-chat-left-text"></i> {{ a.caption }}</div>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro attach_styles() %}
+<style>
+  .att-picker { margin-top: 12px; }
+  .att-file { display: none; }
+  .att-drop {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    border: 1.5px dashed var(--bd); border-radius: 10px;
+    padding: 14px 16px; cursor: pointer; background: var(--bg);
+    transition: border-color .15s, background .15s; text-align: center;
+  }
+  .att-drop:hover { border-color: var(--nv); background: var(--nv-l); }
+  .att-drop i { font-size: 17px; color: var(--nv); }
+  .att-drop-tx { font-size: 12.5px; font-weight: 600; color: var(--tx); }
+  .att-drop-sub { font-size: 11px; color: var(--mt); }
+  .att-chosen { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .att-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #ECFDF5; border: 1px solid #D1FAE5; color: #047857;
+    border-radius: 99px; padding: 3px 11px; font-size: 11.5px; font-weight: 600;
+  }
+  .att-chip.bad { background: #FEF2F2; border-color: #FECACA; color: #B91C1C; }
+
+  .att-list { margin-top: 11px; }
+  .att-list.compact { margin-top: 8px; }
+  .att-list-title {
+    font-size: 10.5px; font-weight: 700; color: var(--mt);
+    letter-spacing: .08em; text-transform: uppercase; margin-bottom: 7px;
+  }
+  .att-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .att-thumb {
+    position: relative; width: 92px; height: 92px; border-radius: 9px;
+    overflow: hidden; border: 1px solid var(--bd); display: block; background: var(--bg);
+  }
+  .att-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .att-thumb:hover { border-color: var(--nv); }
+  .att-thumb-cap {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,.65));
+    color: #fff; font-size: 10px; padding: 10px 6px 4px; text-align: right;
+  }
+  .att-file-card {
+    display: inline-flex; align-items: center; gap: 9px;
+    border: 1px solid var(--bd); border-radius: 9px; padding: 9px 13px;
+    background: var(--wh); color: var(--tx); max-width: 260px;
+  }
+  .att-file-card:hover { border-color: var(--nv); background: var(--bg); }
+  .att-file-card i { font-size: 18px; color: var(--nv); flex-shrink: 0; }
+  .att-file-meta { display: flex; flex-direction: column; min-width: 0; }
+  .att-file-name {
+    font-size: 12.5px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .att-file-size { font-size: 10.5px; color: var(--mt); }
+  .att-caption {
+    margin-top: 8px; font-size: 12px; color: var(--mt);
+    display: flex; align-items: flex-start; gap: 6px; line-height: 1.5;
+  }
+  .att-caption i { color: var(--nv); font-size: 12px; margin-top: 2px; }
+</style>
+{% endmacro %}
+
+{% macro attach_script() %}
+<script>
+// Client-side preflight only; the server re-checks type and size on upload.
+const ATT_MAX_BYTES = 10 * 1024 * 1024;
+const ATT_OK_EXT = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+function attListFiles(input) {
+  const box = document.getElementById(input.id.replace('Input', 'Chosen'));
+  if (!box) return;
+  box.innerHTML = '';
+
+  const keep = new DataTransfer();
+  [...input.files].slice(0, 5).forEach(f => {
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const chip = document.createElement('span');
+    chip.className = 'att-chip';
+
+    if (!ATT_OK_EXT.includes(ext)) {
+      chip.className += ' bad';
+      chip.textContent = f.name + ' - unsupported type';
+    } else if (f.size > ATT_MAX_BYTES) {
+      chip.className += ' bad';
+      chip.textContent = f.name + ' - over 10 MB';
+    } else {
+      chip.textContent = f.name + ' (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
+      keep.items.add(f);
+    }
+    box.appendChild(chip);
+  });
+
+  // Drop anything rejected so the form never posts it.
+  if (keep.files.length !== input.files.length) input.files = keep.files;
+}
+</script>
+{% endmacro %}

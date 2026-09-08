@@ -11,6 +11,16 @@ def _thread_key(m):
     return m.parent_id or m.id
 
 
+def _thread_has_files(message_ids):
+    from app import Attachment
+    if not message_ids:
+        return False
+    return db.session.query(
+        Attachment.query.filter(
+            Attachment.parent_type == Attachment.PARENT_MESSAGE,
+            Attachment.parent_id.in_(message_ids)).exists()).scalar()
+
+
 def _build_threads(uid, tab, q=""):
     """Group every message this user can see into threads, newest activity first.
 
@@ -82,6 +92,7 @@ def _build_threads(uid, tab, q=""):
             "unread": unread,
             "last_at": last.created_at,
             "snippet": (last.body or "").strip().replace("\n", " ")[:110],
+            "has_files": _thread_has_files([m.id for m in msgs]),
         })
 
     threads.sort(key=lambda t: t["last_at"] or datetime.min, reverse=True)
@@ -163,8 +174,18 @@ def register_message_routes(app):
         msg = Message(sender_id=uid, recipient_id=recipient_id,
                       subject=subject, body=body)
         db.session.add(msg)
+        db.session.flush()          # need msg.id to attach files
+
+        from app import save_attachments, Attachment
+        saved, errors = save_attachments(
+            request.files.getlist("attachments"),
+            Attachment.PARENT_MESSAGE, msg.id)
         db.session.commit()
-        flash("Message sent successfully.", "success")
+
+        for e in errors:
+            flash(e, "danger")
+        flash("Message sent successfully."
+              + (f" {saved} file(s) attached." if saved else ""), "success")
         return redirect(url_for("message_view", msg_id=msg.id))
 
     # ── View thread ───────────────────────────
@@ -237,8 +258,17 @@ def register_message_routes(app):
             parent_id=msg_id
         )
         db.session.add(reply)
+        db.session.flush()
+
+        from app import save_attachments, Attachment
+        saved, errors = save_attachments(
+            request.files.getlist("attachments"),
+            Attachment.PARENT_MESSAGE, reply.id)
         db.session.commit()
-        flash("Reply sent.", "success")
+
+        for e in errors:
+            flash(e, "danger")
+        flash("Reply sent." + (f" {saved} file(s) attached." if saved else ""), "success")
         return redirect(url_for("message_view", msg_id=msg_id))
 
     # ── Mark a thread read / unread ───────────
@@ -293,7 +323,24 @@ def register_message_routes(app):
         if msg.sender_id != uid and msg.recipient_id != uid:
             flash("Access denied.", "danger")
         else:
-            Message.query.filter_by(parent_id=msg_id).delete()
+            # Remove the thread's files from disk too, so deleting a
+            # conversation does not leave orphans behind.
+            import os
+            from app import Attachment, _attach_folder
+
+            replies = Message.query.filter_by(parent_id=msg_id).all()
+            ids = [m.id for m in replies] + [msg.id]
+            folder = _attach_folder()
+            for a in Attachment.query.filter(
+                    Attachment.parent_type == Attachment.PARENT_MESSAGE,
+                    Attachment.parent_id.in_(ids)).all():
+                fp = os.path.join(folder, a.stored_filename)
+                if os.path.exists(fp):
+                    os.remove(fp)
+                db.session.delete(a)
+
+            for r in replies:
+                db.session.delete(r)
             db.session.delete(msg)
             db.session.commit()
             flash("Conversation deleted.", "success")

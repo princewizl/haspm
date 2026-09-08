@@ -22,6 +22,9 @@
 
 {% block extra_head %}
 <style>
+  .fld-hint{font-size:11px;color:var(--mt);margin-top:5px;line-height:1.5;}
+  .fld-hint code{background:var(--bg);border:1px solid var(--bd);border-radius:4px;
+                 padding:0 4px;font-size:10.5px;color:var(--nv);}
   /* ─── Grid Layouts ─── */
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
   .prop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px; }
@@ -543,8 +546,35 @@
             </div>
           </div>
           <div class="fg">
-            <label class="form-label">Average / Unit Rent (₦)</label>
-            <input class="form-ctrl" type="number" name="unit_rent" value="{{ p.avg_rent }}" min="0"/>
+            <label class="form-label">Average / Unit Rent (₦ per year)</label>
+            <input class="form-ctrl" type="number" name="avg_rent" value="{{ p.avg_rent }}" min="0"/>
+          </div>
+
+          <div class="g2">
+            <div class="fg">
+              <label class="form-label">Unit Naming Pattern</label>
+              <input class="form-ctrl" name="unit_naming_pattern"
+                     value="{{ p.unit_naming_pattern or '' }}"
+                     placeholder="{{ p.DEFAULT_UNIT_PATTERN }}"/>
+              <div class="fld-hint">
+                <code>{n}</code> is the unit number &mdash; e.g.
+                <code>Block A - Unit {n}</code> gives &ldquo;Block A - Unit 1&rdquo;.
+                Names are unique within this property.
+              </div>
+            </div>
+            {% if session.role == 'Admin' and has_perm('manage_properties') %}
+            <div class="fg">
+              <label class="form-label">Hearts &amp; Sleeves Share (%)</label>
+              <input class="form-ctrl" type="number" name="commission_pct" step="0.01"
+                     min="0" max="100" value="{{ p.commission_pct if p.commission_pct is not none else '' }}"
+                     placeholder="Default ({{ '%g'|format(p.effective_commission_pct) }}%)"/>
+              <div class="fld-hint">
+                Share of everything collected here. The remaining
+                <strong>{{ '%g'|format(100 - p.effective_commission_pct) }}%</strong>
+                goes to the landlord. Leave blank to follow the default set in Settings.
+              </div>
+            </div>
+            {% endif %}
           </div>
 
           <div class="df g8" style="margin-top:24px">
@@ -633,8 +663,31 @@
           </div>
         </div>
         <div class="fg">
-          <label class="form-label">Average / Unit Rent (₦)</label>
-          <input class="form-ctrl" type="number" name="unit_rent" placeholder="e.g. 350000" min="0"/>
+          <label class="form-label">Average / Unit Rent (₦ per year)</label>
+          <input class="form-ctrl" type="number" name="unit_rent" placeholder="e.g. 3500000" min="0"/>
+        </div>
+
+        <div class="g2">
+          <div class="fg">
+            <label class="form-label">Unit Naming Pattern</label>
+            <input class="form-ctrl" name="unit_naming_pattern" placeholder="Unit {n}"/>
+            <div class="fld-hint">
+              <code>{n}</code> is the unit number &mdash; e.g.
+              <code>Block A - Unit {n}</code> gives &ldquo;Block A - Unit 1&rdquo;,
+              &ldquo;Block A - Unit 2&rdquo;&hellip;
+            </div>
+          </div>
+          {% if session.role == 'Admin' and has_perm('manage_properties') %}
+          <div class="fg">
+            <label class="form-label">Hearts &amp; Sleeves Share (%)</label>
+            <input class="form-ctrl" type="number" name="commission_pct" step="0.01"
+                   min="0" max="100" placeholder="Leave blank for the default"/>
+            <div class="fld-hint">
+              Share of everything collected on this property; the rest is the
+              landlord&rsquo;s.
+            </div>
+          </div>
+          {% endif %}
         </div>
 
         <div class="df g8" style="margin-top:24px">

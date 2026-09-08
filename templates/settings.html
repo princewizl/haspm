@@ -93,6 +93,75 @@
 
 {# ── Paystack Integration — its own standalone form (MUST NOT be nested) #}
 {% if session.role == 'Admin' and has_perm('manage_settings') %}
+{# ── Company commission ─────────────────────────────────────────── #}
+{% if role == 'Admin' and has_perm('manage_settings') %}
+<form method="POST" action="{{ url_for('save_commission_config') }}" style="margin-top:16px">
+  <div class="card">
+    <div class="card-hdr">
+      <span class="card-title">
+        <i class="bi bi-percent" style="color:var(--cr);margin-right:6px"></i>Company Share of Collections
+      </span>
+      <span class="badge b-confirmed" style="font-size:11px">
+        Default {{ '%g'|format(default_commission_pct) }}%
+      </span>
+    </div>
+    <div class="card-body">
+      <p style="font-size:12.5px;color:var(--mt);margin-bottom:14px;line-height:1.6">
+        The share of everything collected on a property that belongs to Hearts &amp; Sleeves.
+        The remainder is the landlord&rsquo;s. Individual properties can override this
+        &mdash; set a rate on the property itself.
+      </p>
+
+      <div class="g2">
+        <div class="fg">
+          <label class="form-label">Default Share (%)</label>
+          <input class="form-ctrl" type="number" name="default_commission_pct"
+                 step="0.01" min="0" max="100"
+                 value="{{ '%g'|format(default_commission_pct) }}"/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Landlord Receives</label>
+          <input class="form-ctrl" value="{{ '%g'|format(100 - default_commission_pct) }}%"
+                 disabled style="background:var(--bg)"/>
+        </div>
+      </div>
+
+      {% if commission_properties %}
+      <div style="margin-top:6px">
+        <div style="font-size:11px;font-weight:600;color:var(--mt);letter-spacing:.08em;
+                    text-transform:uppercase;margin-bottom:8px">Current rates</div>
+        <div class="tw" style="max-height:220px;overflow-y:auto">
+          <table class="ht">
+            <thead><tr><th>Property</th><th>H&amp;S</th><th>Landlord</th><th>Source</th></tr></thead>
+            <tbody>
+              {% for cp in commission_properties %}
+              <tr>
+                <td style="font-weight:600">{{ cp.name }}</td>
+                <td>{{ '%g'|format(cp.effective_commission_pct) }}%</td>
+                <td>{{ '%g'|format(100 - cp.effective_commission_pct) }}%</td>
+                <td>
+                  {% if cp.uses_default_commission %}
+                    <span class="badge b-pending" style="font-size:10px">Default</span>
+                  {% else %}
+                    <span class="badge b-confirmed" style="font-size:10px">Set on property</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      <button type="submit" class="btn-cr" style="margin-top:16px">
+        <i class="bi bi-check2"></i> Save Default Share
+      </button>
+    </div>
+  </div>
+</form>
+{% endif %}
+
 <div class="settings-grid" style="margin-top:16px">
 
   {# Bank Account card — left column #}
@@ -285,7 +354,7 @@
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
             {% for job, desc in [
               ('Mark Overdue Invoices', 'Flips pending → overdue; emails tenants (weekly)'),
-              ('Monthly Rent Invoices', 'Generates rent invoice if none exists this month'),
+              ('Annual Rent Invoices', 'Raises the year’s rent invoice on each lease anniversary'),
               ('Lease Expiry Check', 'Warns tenants 30 days before lease ends + final invoice')
             ] %}
             <div style="background:var(--bg);border-radius:9px;padding:10px 14px;display:flex;align-items:center;gap:10px">

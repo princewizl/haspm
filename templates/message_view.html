@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_attachments.html" import attach_input, attach_list, attach_styles, attach_script %}
 {% block title %}{{ msg.subject }}{% endblock %}
 {% block page_title %}Conversation{% endblock %}
 
@@ -9,6 +10,7 @@
 {% endblock %}
 
 {% block extra_head %}
+{{ attach_styles() }}
 <style>
   .thread-wrap { max-width:760px; }
 
@@ -115,6 +117,7 @@
       <span class="msg-bubble-time">{{ msg.created_at.strftime('%b %d, %Y · %H:%M') }}</span>
     </div>
     <div class="msg-bubble-body">{{ msg.body }}</div>
+    {{ attach_list(attachments_for('message', msg.id), compact=True) }}
     {% if msg.sender_id == uid %}
     <div class="msg-receipt {% if msg.read_at %}seen{% endif %}">
       <i class="bi bi-{{ 'check2-all' if msg.read_at else 'check2' }}"></i>
@@ -138,6 +141,7 @@
       <span class="msg-bubble-time">{{ r.created_at.strftime('%b %d, %Y · %H:%M') }}</span>
     </div>
     <div class="msg-bubble-body">{{ r.body }}</div>
+    {{ attach_list(attachments_for('message', r.id), compact=True) }}
     {% if r.sender_id == uid %}
     <div class="msg-receipt {% if r.read_at %}seen{% endif %}">
       <i class="bi bi-{{ 'check2-all' if r.read_at else 'check2' }}"></i>
@@ -153,9 +157,11 @@
       <i class="bi bi-reply" style="color:var(--nv)"></i> Reply
       <span class="to">to {{ other.name }}</span>
     </div>
-    <form method="POST" action="{{ url_for('message_reply', msg_id=msg.id) }}" id="replyForm">
+    <form method="POST" action="{{ url_for('message_reply', msg_id=msg.id) }}" id="replyForm"
+          enctype="multipart/form-data">
       <textarea class="form-ctrl" name="body" id="replyBody"
                 placeholder="Write your reply…" required></textarea>
+      {{ attach_input('attachments', 'Attach photos or documents') }}
       <div class="reply-actions">
         <button type="submit" class="btn-cr sm">
           <i class="bi bi-send"></i> Send Reply
@@ -169,6 +175,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ attach_script() }}
 <script>
 const rb = document.getElementById('replyBody');
 if (rb) {

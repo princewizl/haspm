@@ -80,29 +80,92 @@ def _running_balance(tenant_id):
     return paid + adj_cr - charged - adj_ch
 
 
+def _collections_by_property(prop_ids):
+    """{property_id: total confirmed money collected} in one query."""
+    if not prop_ids:
+        return {}
+    rows = (db.session.query(Unit.property_id, db.func.sum(Transaction.amount))
+            .join(Invoice, Invoice.unit_id == Unit.id)
+            .join(Transaction, Transaction.invoice_id == Invoice.id)
+            .filter(Unit.property_id.in_(prop_ids),
+                    Transaction.status == "confirmed")
+            .group_by(Unit.property_id)
+            .all())
+    return {pid: (total or 0) for pid, total in rows}
+
+
 def _landlord_earnings(landlord_id):
+    """What a landlord has earned, after Hearts & Sleeves takes its share.
+
+    The commission rate is set per property, so the split is computed property
+    by property: the configured percentage of everything collected there is the
+    company's, and the remainder is the landlord's. Property expenses (which is
+    how technicians get paid) then come off the landlord's side.
+    """
     props    = Property.query.filter_by(landlord_id=landlord_id).all()
     prop_ids = [p.id for p in props]
     if not prop_ids:
-        return dict(total_income=0, total_expenses=0, net=0,
-                    pending_payouts=0, withdrawable=0)
+        return dict(total_income=0, gross_collected=0, company_share=0,
+                    total_expenses=0, net=0, pending_payouts=0,
+                    withdrawable=0, by_property=[])
 
-    unit_ids = [u.id for p in props for u in p.units.all()]
-    inv_ids  = [i.id for i in Invoice.query.filter(Invoice.unit_id.in_(unit_ids)).all()]
+    collected = _collections_by_property(prop_ids)
 
-    total_income = (db.session.query(db.func.sum(Transaction.amount))
-                   .filter(Transaction.invoice_id.in_(inv_ids),
-                           Transaction.status == "confirmed").scalar() or 0)
-    total_exp    = (db.session.query(db.func.sum(Expense.amount))
-                   .filter(Expense.property_id.in_(prop_ids),
-                           Expense.status == "paid").scalar() or 0)
-    pending_p    = (db.session.query(db.func.sum(LandlordPayout.amount))
-                   .filter_by(landlord_id=landlord_id, status="pending").scalar() or 0)
-    net          = total_income - total_exp
+    gross = company = 0.0
+    by_property = []
+    for p in props:
+        p_gross = collected.get(p.id, 0) or 0
+        p_company, p_landlord = p.split(p_gross)
+        gross   += p_gross
+        company += p_company
+        by_property.append(dict(
+            property=p, collected=p_gross, pct=p.effective_commission_pct,
+            company_share=p_company, landlord_share=p_landlord,
+        ))
+
+    landlord_income = gross - company
+
+    total_exp = (db.session.query(db.func.sum(Expense.amount))
+                 .filter(Expense.property_id.in_(prop_ids),
+                         Expense.status == "paid").scalar() or 0)
+    pending_p = (db.session.query(db.func.sum(LandlordPayout.amount))
+                 .filter_by(landlord_id=landlord_id, status="pending").scalar() or 0)
+
+    net          = landlord_income - total_exp
     withdrawable = max(0.0, net - pending_p)
 
-    return dict(total_income=total_income, total_expenses=total_exp,
-                net=net, pending_payouts=pending_p, withdrawable=withdrawable)
+    return dict(
+        total_income=landlord_income,     # the landlord's share, not the gross
+        gross_collected=gross,
+        company_share=company,
+        total_expenses=total_exp,
+        net=net, pending_payouts=pending_p, withdrawable=withdrawable,
+        by_property=by_property,
+    )
+
+
+def _company_earnings(prop_ids=None):
+    """Hearts & Sleeves' own share across every property it manages."""
+    q = Property.query if prop_ids is None else Property.query.filter(Property.id.in_(prop_ids))
+    props     = q.all()
+    collected = _collections_by_property([p.id for p in props])
+
+    gross = company = 0.0
+    rows = []
+    for p in props:
+        p_gross = collected.get(p.id, 0) or 0
+        if not p_gross:
+            continue
+        p_company, p_landlord = p.split(p_gross)
+        gross   += p_gross
+        company += p_company
+        rows.append(dict(property=p, collected=p_gross,
+                         pct=p.effective_commission_pct,
+                         company_share=p_company, landlord_share=p_landlord))
+
+    rows.sort(key=lambda r: r["company_share"], reverse=True)
+    return dict(gross_collected=gross, company_share=company,
+                landlord_share=gross - company, rows=rows)
 
 
 def _cashflow_forecast(prop_ids=None, months=12):
@@ -120,8 +183,11 @@ def _cashflow_forecast(prop_ids=None, months=12):
         yr  = today.year  + (today.month + i - 1) // 12
         mo  = (today.month + i - 1) % 12 + 1
         m_start = date(yr, mo, 1)
-        amount  = sum(t.monthly_rent for t in tenancies
-                      if t.end_date is None or t.end_date >= m_start)
+        # Rent is billed once a year on the lease anniversary, so a tenancy
+        # only contributes to the month its anniversary falls in.
+        amount  = sum(t.annual_rent for t in tenancies
+                      if (t.end_date is None or t.end_date >= m_start)
+                      and t.start_date and t.start_date.month == mo)
         result.append({
             "month":  m_start.strftime("%Y-%m"),
             "label":  m_start.strftime("%b %Y"),
@@ -465,7 +531,7 @@ def register_finance_routes(app):
                 "email":        tenant.email,
                 "unit":         unit.unit_number if unit else "—",
                 "property":     prop.name if prop else "—",
-                "monthly_rent": ten.monthly_rent,
+                "annual_rent": ten.annual_rent,
                 "total_charged": total_ch,
                 "total_paid":   total_pd,
                 "balance":      bal,

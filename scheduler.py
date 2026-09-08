@@ -2,7 +2,7 @@
 Background scheduler — HS Property Management.
 Three daily jobs run at 08:00 WAT (Africa/Lagos):
   1. mark_overdue       — flip pending→overdue, email tenant weekly
-  2. monthly_invoices   — generate rent invoice if none exists this month
+  2. annual_invoices    — generate the year's rent invoice on the lease anniversary
   3. lease_expiry       — 30-day warning + final invoice when lease ends soon
 """
 import os
@@ -84,30 +84,71 @@ def mark_overdue_invoices(app):
         log.info(f"[mark_overdue] {len(overdue)} invoice(s) flipped overdue.")
 
 
-# ── job 2: monthly rent invoice generation ────────────────────────────
+# ── job 2: annual rent invoice generation ─────────────────────────────
 
-def generate_monthly_rent_invoices(app):
+def _lease_year_window(tenancy, today):
+    """The current lease year for a tenancy, as (period_start, period_end).
+
+    Rent is billed once per year on the anniversary of the lease start, so a
+    tenancy that began 2025-03-01 is invoiced for 2025-03-01..2026-02-28, then
+    2026-03-01, and so on.
     """
-    Idempotent: creates a Rent invoice for each active tenancy
-    if none already exists for the current calendar month.
+    start = tenancy.start_date
+    if not start or today < start:
+        return None, None
+
+    years = today.year - start.year
+    try:
+        anniversary = start.replace(year=start.year + years)
+    except ValueError:                       # 29 Feb on a non-leap year
+        anniversary = start.replace(year=start.year + years, day=28)
+    if anniversary > today:
+        years -= 1
+        try:
+            anniversary = start.replace(year=start.year + years)
+        except ValueError:
+            anniversary = start.replace(year=start.year + years, day=28)
+
+    try:
+        nxt = start.replace(year=start.year + years + 1)
+    except ValueError:
+        nxt = start.replace(year=start.year + years + 1, day=28)
+
+    return anniversary, nxt - timedelta(days=1)
+
+
+def generate_annual_rent_invoices(app):
     """
+    Idempotent: creates one Rent invoice per active tenancy per lease year.
+
+    Rent is paid annually, so a tenant is billed on the anniversary of their
+    lease start and not again until the next one. Invoices are raised
+    ADVANCE_DAYS before the anniversary so the tenant has notice.
+    """
+    ADVANCE_DAYS = 30
+
     with app.app_context():
         today = date.today()
-        m_start, m_end = _month_window(today)
-        due_date = today + timedelta(days=7)
-
         active = Tenancy.query.filter_by(is_active=True).all()
         created = 0
 
         for t in active:
-            # Skip if lease ends before the due date (lease_expiry job handles these)
-            if t.end_date and t.end_date < due_date:
+            if not t.start_date:
                 continue
 
+            period_start, period_end = _lease_year_window(t, today + timedelta(days=ADVANCE_DAYS))
+            if period_start is None:
+                continue
+
+            # Do not bill a year that starts after the lease has ended.
+            if t.end_date and period_start > t.end_date:
+                continue
+
+            # One Rent invoice per lease year: due on the anniversary itself.
             existing = (Invoice.query
-                        .filter_by(tenant_id=t.tenant_id, type="Rent")
-                        .filter(Invoice.due_date >= m_start,
-                                Invoice.due_date <= m_end)
+                        .filter_by(tenant_id=t.tenant_id, unit_id=t.unit_id, type="Rent")
+                        .filter(Invoice.due_date >= period_start,
+                                Invoice.due_date <= period_end)
                         .first())
             if existing:
                 continue
@@ -115,8 +156,8 @@ def generate_monthly_rent_invoices(app):
             inv = Invoice(
                 inv_number=_next_inv_number(),
                 type="Rent",
-                amount=t.monthly_rent,
-                due_date=due_date,
+                amount=t.annual_rent,
+                due_date=period_start,
                 status="pending",
                 tenant_id=t.tenant_id,
                 unit_id=t.unit_id,
@@ -126,14 +167,15 @@ def generate_monthly_rent_invoices(app):
 
             tenant    = t.tenant
             prop_name = (t.unit.prop.name if t.unit and t.unit.prop else "Your Property")
-            if not _already_notified(tenant.id, "rent_invoice", window_days=25):
+            # One notification per lease year, not per run.
+            if not _already_notified(tenant.id, "rent_invoice", ref_id=inv.id, window_days=300):
                 ok = send_invoice_email(app, tenant.email, tenant.name, inv, prop_name)
                 _log(tenant.id, "rent_invoice", ref_id=inv.id,
                      recipient=tenant.email, status="sent" if ok else "failed")
             created += 1
 
         db.session.commit()
-        log.info(f"[monthly_invoices] {created} invoice(s) created.")
+        log.info(f"[annual_invoices] {created} rent invoice(s) created.")
 
 
 # ── job 3: lease expiry warning (30 days before end) ──────────────────
@@ -164,32 +206,8 @@ def check_lease_expiry(app):
                 _log(tenant.id, "lease_expiry", ref_id=t.id,
                      recipient=tenant.email, status="sent" if ok else "failed")
 
-            # Generate final month invoice if not yet issued
-            if t.end_date.month == 12:
-                next_m = date(t.end_date.year + 1, 1, 1)
-            else:
-                next_m = date(t.end_date.year, t.end_date.month, 1)
-
-            final_exists = (Invoice.query
-                            .filter_by(tenant_id=t.tenant_id, type="Rent")
-                            .filter(Invoice.due_date >= next_m)
-                            .first())
-            if not final_exists:
-                inv = Invoice(
-                    inv_number=_next_inv_number(),
-                    type="Rent",
-                    amount=t.monthly_rent,
-                    due_date=t.end_date,
-                    status="pending",
-                    tenant_id=t.tenant_id,
-                    unit_id=t.unit_id,
-                )
-                db.session.add(inv)
-                db.session.flush()
-                prop_name = (t.unit.prop.name if t.unit and t.unit.prop else "Your Property")
-                ok2 = send_invoice_email(app, tenant.email, tenant.name, inv, prop_name)
-                _log(tenant.id, "rent_invoice", ref_id=inv.id,
-                     recipient=tenant.email, status="sent" if ok2 else "failed")
+            # No final invoice here: with annual rent the year's invoice was
+            # already raised on the anniversary by generate_annual_rent_invoices.
 
         db.session.commit()
         log.info(f"[lease_expiry] Processed {len(expiring)} expiring tenancy/ies.")
@@ -200,7 +218,7 @@ def check_lease_expiry(app):
 def run_all_jobs(app):
     """Trigger all three jobs immediately (admin manual run)."""
     mark_overdue_invoices(app)
-    generate_monthly_rent_invoices(app)
+    generate_annual_rent_invoices(app)
     check_lease_expiry(app)
 
 
@@ -217,9 +235,9 @@ def init_scheduler(app):
             id="mark_overdue", replace_existing=True,
         )
         scheduler.add_job(
-            func=lambda: generate_monthly_rent_invoices(app),
+            func=lambda: generate_annual_rent_invoices(app),
             trigger=CronTrigger(hour=8, minute=5, timezone=tz),
-            id="monthly_invoices", replace_existing=True,
+            id="annual_invoices", replace_existing=True,
         )
         scheduler.add_job(
             func=lambda: check_lease_expiry(app),
