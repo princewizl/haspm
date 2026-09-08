@@ -40,6 +40,24 @@ esac
 echo "==> Building image"
 docker compose build web-live
 
+# Schema changes must land before the new code serves traffic. Live is backed
+# up first so a bad migration is recoverable.
+case "$TARGET" in
+  test) MIGRATE=(test) ;;
+  live) MIGRATE=(live) ;;
+  all)  MIGRATE=(test live) ;;
+esac
+
+for env in "${MIGRATE[@]}"; do
+  if [ "$env" = "live" ]; then
+    echo "==> Backing up live before migrating"
+    "$APP_DIR/deploy/backup.sh" live || {
+      echo "Backup failed - refusing to migrate live." >&2; exit 1; }
+  fi
+  echo "==> Migrating $env database"
+  docker compose run --rm --no-deps "web-$env" python migrate_v2.py
+done
+
 echo "==> Starting: ${SERVICES[*]}"
 docker compose up -d --force-recreate "${SERVICES[@]}"
 
