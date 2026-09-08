@@ -59,6 +59,9 @@ services:
       - ./data/live/static-uploads:/app/static/uploads
       - ./data/live/doc-uploads:/app/uploads
     command: ["python", "scheduler_worker.py"]
+    # No HTTP listener here, so the image's curl healthcheck can never pass.
+    healthcheck:
+      disable: true
 
   # ── TEST — test.haspm.com ───────────────────────────────────────────
   # Separate database and uploads. Outbound mail is hard-disabled and no
