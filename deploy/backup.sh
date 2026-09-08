@@ -20,9 +20,17 @@ mkdir -p "$DEST"
 
 DB="$SRC/data/hs_property.db"
 if [ -f "$DB" ]; then
-  docker run --rm -v "$SRC/data":/d -v "$DEST":/out \
-    keinos/sqlite3:latest \
-    sqlite3 /d/hs_property.db ".backup '/out/hs_property-$STAMP.db'"
+  # sqlite3's online backup API via the stdlib - consistent even mid-write,
+  # and no container or extra package needed.
+  python3 - "$DB" "$DEST/hs_property-$STAMP.db" <<'PY'
+import sqlite3, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+d = sqlite3.connect(dst)
+with d:
+    s.backup(d)
+d.close(); s.close()
+PY
   gzip -f "$DEST/hs_property-$STAMP.db"
   echo "  db      -> $DEST/hs_property-$STAMP.db.gz"
 else
