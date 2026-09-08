@@ -2,6 +2,8 @@
 HS Property Management — Database Models
 All relationships are defined here via SQLAlchemy ORM.
 """
+import secrets
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 
@@ -17,7 +19,7 @@ class User(db.Model):
     id         = db.Column(db.Integer, primary_key=True)
     name       = db.Column(db.String(120), nullable=False)
     email      = db.Column(db.String(180), unique=True, nullable=False)
-    password   = db.Column(db.String(200), nullable=False)   # plain-text for demo; hash in prod
+    password   = db.Column(db.String(255), nullable=False)   # werkzeug hash; see set_password()
     role       = db.Column(db.String(20),  nullable=False, default="Tenant")  # Admin | Landlord | Tenant
     # Admin staff department: Management | Finance | Maintenance | Customer Service
     # NULL for non-admins; NULL admin = legacy super-admin (treated as Management)
@@ -35,6 +37,29 @@ class User(db.Model):
     invoices    = db.relationship("Invoice",   back_populates="tenant",    lazy="dynamic")
     tickets     = db.relationship("Ticket",    back_populates="tenant",    lazy="dynamic")
     transactions = db.relationship("Transaction", back_populates="tenant", lazy="dynamic")
+
+    # ── Password handling ────────────────────────────────────────────
+    # Stored as a werkzeug hash. Accounts created before hashing was added
+    # still hold a plain-text value; check_password() accepts those once so
+    # nobody is locked out, and the caller re-hashes on the spot.
+
+    def set_password(self, raw):
+        """Hash and store a new password."""
+        self.password = generate_password_hash(raw, method="pbkdf2:sha256")
+
+    def check_password(self, raw):
+        """True if `raw` matches. Legacy plain-text values still verify."""
+        if not self.password:
+            return False
+        if self.password.startswith(("pbkdf2:", "scrypt:", "argon2")):
+            return check_password_hash(self.password, raw)
+        return secrets.compare_digest(self.password, raw)
+
+    @property
+    def password_needs_rehash(self):
+        """True while this account is still on a legacy plain-text password."""
+        return bool(self.password) and not self.password.startswith(
+            ("pbkdf2:", "scrypt:", "argon2"))
 
     def __repr__(self):
         return f"<User {self.email} [{self.role}]>"

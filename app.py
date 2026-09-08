@@ -32,18 +32,35 @@ from models import db, User, Property, PropertyImage, Unit, Tenancy, Invoice, Tr
 #  APP CONFIG
 # ─────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = "hs-property-secret-2025"
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-app.config["SQLALCHEMY_DATABASE_URI"]        = f"sqlite:///{os.path.join(BASE_DIR, 'hs_property.db')}"
+
+# Environment name: development | test | live.  Shown in the UI banner so nobody
+# mistakes the staging site for production.
+APP_ENV = os.environ.get("APP_ENV", "development")
+
+# Writable state (database + saved integration config) lives here.  Under Docker
+# this points at a mounted volume so it survives image rebuilds; locally it is
+# just the project directory, so nothing changes for development.
+DATA_DIR = os.environ.get("HSPM_DATA_DIR", BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+app.secret_key = os.environ.get("SECRET_KEY", "hs-property-secret-2025")
+
+app.config["APP_ENV"]                        = APP_ENV
+app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get(
+    "DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'hs_property.db')}")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# Property images are served by Flask's /static route, so they must stay inside
+# the static tree; the volume is mounted at static/uploads.
 app.config["UPLOAD_FOLDER"]                  = os.path.join(BASE_DIR, "static", "uploads", "properties")
 app.config["MAX_CONTENT_LENGTH"]             = 10 * 1024 * 1024  # 10 MB (matches the document upload limit)
-app.config["DOCS_UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads", "documents")
+app.config["DOCS_UPLOAD_FOLDER"] = os.environ.get(
+    "DOCS_UPLOAD_FOLDER", os.path.join(BASE_DIR, "uploads", "documents"))
 os.makedirs(app.config["DOCS_UPLOAD_FOLDER"], exist_ok=True)
 
 # ── Email config (persisted in email_config.json) ─────────────────────
-EMAIL_CONFIG_FILE = os.path.join(BASE_DIR, "email_config.json")
+EMAIL_CONFIG_FILE = os.path.join(DATA_DIR, "email_config.json")
 
 def _load_email_config():
     if os.path.exists(EMAIL_CONFIG_FILE):
@@ -62,9 +79,13 @@ app.config.setdefault("MAIL_USE_TLS",        True)
 app.config.setdefault("MAIL_USERNAME",       "")
 app.config.setdefault("MAIL_PASSWORD",       "")
 app.config.setdefault("MAIL_DEFAULT_SENDER", "")
+# Hard kill-switch for outbound mail, set on the test environment.
+if os.environ.get("MAIL_SUPPRESS_SEND", "0") == "1":
+    app.config["MAIL_SUPPRESS_SEND"] = True
+    app.config["MAIL_SERVER"] = ""
 
 # ── Paystack config (persisted in paystack_config.json) ───────────────
-PAYSTACK_CONFIG_FILE = os.path.join(BASE_DIR, "paystack_config.json")
+PAYSTACK_CONFIG_FILE = os.path.join(DATA_DIR, "paystack_config.json")
 
 def _load_paystack_config():
     if os.path.exists(PAYSTACK_CONFIG_FILE):
@@ -115,7 +136,9 @@ def _start_scheduler():
     from scheduler import init_scheduler
     init_scheduler(app)
 
-if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+ENABLE_SCHEDULER = os.environ.get("ENABLE_SCHEDULER", "1") == "1"
+
+if ENABLE_SCHEDULER and (not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true"):
     _start_scheduler()
 
 
@@ -195,9 +218,17 @@ def login():
         if not user:
             flash("No account found with that email address.", "danger")
             return render_template("login.html")
-        if user.password != password:
+        if not user.check_password(password):
             flash("Incorrect password. Please try again.", "danger")
             return render_template("login.html")
+
+        # Accounts predating password hashing are upgraded on first correct
+        # login, so no one is locked out and plain text disappears over time.
+        if user.password_needs_rehash:
+            user.set_password(password)
+            db.session.commit()
+            app.logger.info("[auth] re-hashed legacy password for user %s", user.id)
+
         session["user_id"] = user.id
         session["user"]    = user.name
         session["role"]    = user.role
@@ -521,9 +552,9 @@ def add_tenant():
         phone=phone,
         role=role,
         department=department,
-        password=password, # Note: In production, hash this using werkzeug.security
         is_active=True
     )
+    new_user.set_password(password)
     db.session.add(new_user)
     db.session.flush() # Flush to get the new_user.id
 
@@ -604,8 +635,7 @@ def edit_tenant(user_id):
 
     # Update password only if provided
     if password:
-        user.password = password
-        # user.password = generate_password_hash(password)  # recommended for production
+        user.set_password(password)
 
     # Handle tenancy updates — rent/unit assignment is Management-only.
     # Customer Service edits stop at contact details; skipping this block also

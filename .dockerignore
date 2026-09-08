@@ -1,0 +1,25 @@
+.git
+.github
+__pycache__/
+*.py[cod]
+*.bak
+.venv/
+venv/
+
+# Never bake local state into the image - it lives on mounted volumes.
+hs_property.db
+*.db
+data/
+email_config.json
+paystack_config.json
+uploads/
+static/uploads/
+
+# Local-only and oversized design assets
+static/img/Home.svg
+*.pdf
+desktop.ini
+login.html
+deploy/
+DEPLOYMENT.md
+README.md

@@ -1,0 +1,35 @@
+name: Deploy to test
+
+# Every push to main lands on test.haspm.com. Live is a separate, manual step.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-test
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - name: Open SSH session
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "REF=${GITHUB_REF_NAME} /opt/haspm/deploy/deploy.sh test"
+
+      - name: Verify
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://test.haspm.com/)
+          echo "test.haspm.com -> $code"
+          test "$code" = "200"

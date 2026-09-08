@@ -1,0 +1,55 @@
+name: Deploy to live
+
+# Deliberately manual. Promote to haspm.com only after test.haspm.com looks right.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit SHA to deploy"
+        required: true
+        default: main
+      confirm:
+        description: 'Type "deploy" to confirm you mean production'
+        required: true
+
+concurrency:
+  group: deploy-live
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: live          # add required reviewers here for an approval gate
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "deploy" ]; then
+            echo "Confirmation text did not match. Nothing was deployed."
+            exit 1
+          fi
+
+      - name: Open SSH session
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Back up the live database first
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "/opt/haspm/deploy/backup.sh live"
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "REF=${{ github.event.inputs.ref }} /opt/haspm/deploy/deploy.sh live"
+
+      - name: Verify
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://haspm.com/)
+          title=$(curl -sS --max-time 20 https://haspm.com/ | grep -o '<title>[^<]*' | head -1)
+          echo "haspm.com -> $code | $title"
+          test "$code" = "200"

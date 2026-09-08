@@ -1,0 +1,103 @@
+services:
+
+  # ── Edge: terminates TLS, routes by hostname ────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: haspm-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Whole directories only. A single-file bind mount stays pinned to the
+      # old inode when the file is replaced, so a running container would keep
+      # serving a stale config after an edit.
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - web-live
+      - web-test
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── LIVE — haspm.com ────────────────────────────────────────────────
+  web-live:
+    build: .
+    image: haspm-app:latest
+    container_name: haspm-web-live
+    restart: unless-stopped
+    env_file: .env.live
+    environment:
+      APP_ENV: live
+      ENABLE_SCHEDULER: "0"        # owned by sched-live, never by a web worker
+      HSPM_DATA_DIR: /app/data
+      DOCS_UPLOAD_FOLDER: /app/uploads/documents
+    volumes:
+      - ./data/live/data:/app/data
+      - ./data/live/static-uploads:/app/static/uploads
+      - ./data/live/doc-uploads:/app/uploads
+    expose:
+      - "8000"
+
+  sched-live:
+    image: haspm-app:latest
+    container_name: haspm-sched-live
+    restart: unless-stopped
+    depends_on:
+      - web-live
+    env_file: .env.live
+    environment:
+      APP_ENV: live
+      HSPM_DATA_DIR: /app/data
+      DOCS_UPLOAD_FOLDER: /app/uploads/documents
+    volumes:
+      - ./data/live/data:/app/data
+      - ./data/live/static-uploads:/app/static/uploads
+      - ./data/live/doc-uploads:/app/uploads
+    command: ["python", "scheduler_worker.py"]
+
+  # ── TEST — test.haspm.com ───────────────────────────────────────────
+  # Separate database and uploads. Outbound mail is hard-disabled and no
+  # scheduler runs, so staging can never invoice or email a real tenant.
+  web-test:
+    build: .
+    image: haspm-app:latest
+    container_name: haspm-web-test
+    restart: unless-stopped
+    env_file: .env.test
+    environment:
+      APP_ENV: test
+      ENABLE_SCHEDULER: "0"
+      MAIL_SUPPRESS_SEND: "1"
+      HSPM_DATA_DIR: /app/data
+      DOCS_UPLOAD_FOLDER: /app/uploads/documents
+    volumes:
+      - ./data/test/data:/app/data
+      - ./data/test/static-uploads:/app/static/uploads
+      - ./data/test/doc-uploads:/app/uploads
+    expose:
+      - "8000"
+
+  # ── Certificate renewal (initial issue is done by deploy/issue-certs.sh) ──
+  certbot:
+    image: certbot/certbot:latest
+    container_name: haspm-certbot
+    restart: unless-stopped
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Retry twice a day; certbot only acts inside the 30-day renewal window.
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               certbot renew --webroot -w /var/www/certbot --quiet;
+               sleep 12h & wait $${!};
+             done"
+
+volumes:
+  letsencrypt:
+  certbot-www:

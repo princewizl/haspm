@@ -1,0 +1,9 @@
+# These are executed on Linux. CRLF endings would break the shebang line
+# ("bash\r: command not found"), so force LF regardless of the local platform.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.conf          text eol=lf
+.env.example    text eol=lf
+.dockerignore   text eol=lf

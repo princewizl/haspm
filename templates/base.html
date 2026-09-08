@@ -61,6 +61,9 @@
     .topbar{background:var(--wh);border-bottom:1px solid var(--bd);padding:0 28px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 1px 3px rgba(0,0,0,.04);}
     .topbar-left{display:flex;align-items:center;gap:14px;}
     .page-title-top{font-weight:600;font-size:19px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    /* Staging marker - live deliberately shows nothing. */
+    .env-badge{display:inline-flex;align-items:center;gap:5px;background:#FFFBEB;color:#B45309;border:1px solid #FDE68A;border-radius:99px;padding:3px 11px;font-size:11px;font-weight:700;letter-spacing:.06em;white-space:nowrap;}
+    .env-badge i{font-size:12px;}
     .topbar-right{display:flex;align-items:center;gap:10px;}
     .search-box{background:var(--bg);border:1.5px solid var(--bd);border-radius:9px;padding:7px 13px;display:flex;align-items:center;gap:8px;color:var(--mt);font-size:13px;transition:border-color .2s;}
     .search-box:focus-within{border-color:var(--nv);}
@@ -307,6 +310,11 @@
     <div class="topbar-left">
       <button class="sb-toggle-btn" onclick="toggleMobileSidebar()"><i class="bi bi-list"></i></button>
       <span class="page-title-top">{% block page_title %}Dashboard{% endblock %}</span>
+      {% if config.APP_ENV and config.APP_ENV != 'live' %}
+      <span class="env-badge" title="This is not the live site. Data here is separate and email is disabled.">
+        <i class="bi bi-cone-striped"></i> {{ config.APP_ENV|upper }}
+      </span>
+      {% endif %}
     </div>
     <div class="topbar-right">
       {% block topbar_actions %}{% endblock %}

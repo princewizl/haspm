@@ -1,0 +1,29 @@
+# ── Secrets and live data — never commit ──
+.env
+.env.live
+.env.test
+*.db
+*.sqlite3
+email_config.json
+paystack_config.json
+
+# Runtime state (lives on Docker volumes / the server)
+data/
+backups/
+uploads/
+static/uploads/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local scratch
+*.bak
+/desktop.ini
+/login.html
+/{templates,static/
+
+# Design source (7.7 MB); the exported assets in static/img are what ship
+static/img/Home.svg
