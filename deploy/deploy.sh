@@ -14,11 +14,19 @@ REF=${REF:-main}
 
 cd "$APP_DIR"
 
-echo "==> Fetching $REF"
-git fetch --all --prune
-git checkout -B deployed "origin/$REF" 2>/dev/null || git checkout "$REF"
-git reset --hard "origin/$REF"
-echo "    now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+# The update below rewrites this very file. bash reads a script incrementally
+# by byte offset, so continuing past that point can silently skip or garble
+# whatever changed. Update first, then re-exec the fresh copy exactly once.
+if [ -z "${HASPM_REEXEC:-}" ]; then
+  echo "==> Fetching $REF"
+  git fetch --all --prune
+  git checkout -B deployed "origin/$REF" 2>/dev/null || git checkout "$REF"
+  git reset --hard "origin/$REF"
+  echo "    now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+
+  export HASPM_REEXEC=1
+  exec bash "$APP_DIR/deploy/deploy.sh" "$@"
+fi
 
 # Volumes are owned by the image's non-root user (uid 10001). Running as the
 # CI "deploy" account we are not root, so fall back to the narrow sudo rule.
