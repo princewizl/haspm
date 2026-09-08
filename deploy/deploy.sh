@@ -20,7 +20,6 @@ git checkout -B deployed "origin/$REF" 2>/dev/null || git checkout "$REF"
 git reset --hard "origin/$REF"
 echo "    now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
-# Volumes are owned by the image's non-root user.
 # Volumes are owned by the image's non-root user (uid 10001). Running as the
 # CI "deploy" account we are not root, so fall back to the narrow sudo rule.
 mkdir -p data/{live,test}/{data,static-uploads/properties,doc-uploads/documents}
