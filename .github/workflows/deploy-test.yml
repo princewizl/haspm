@@ -16,11 +16,37 @@ jobs:
     environment: test
     steps:
       - name: Open SSH session
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY:  ${{ secrets.SSH_KEY }}
         run: |
+          # Name the missing secret instead of failing silently further down.
+          missing=""
+          [ -n "$SSH_HOST" ] || missing="$missing SSH_HOST"
+          [ -n "$SSH_USER" ] || missing="$missing SSH_USER"
+          [ -n "$SSH_KEY" ]  || missing="$missing SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          if ! ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null; then
+            echo "::error::SSH_KEY is not a valid private key. Paste the whole file, including the BEGIN and END lines."
+            exit 1
+          fi
+
+          for i in 1 2 3; do
+            ssh-keyscan -T 10 -H "$SSH_HOST" >> ~/.ssh/known_hosts && break
+            echo "ssh-keyscan attempt $i failed, retrying"; sleep 5
+          done
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error::Could not reach $SSH_HOST on port 22 from GitHub Actions."
+            exit 1
+          fi
 
       - name: Deploy
         run: |
