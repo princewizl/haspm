@@ -3,7 +3,19 @@
 {% block title %}Service Requests{% endblock %}
 {% block page_title %}{% if role=='Tenant' %}Report an Issue{% else %}Service Requests{% endif %}{% endblock %}
 
+{# Coloured label for a classification, per the Maintenance Request Classification spec #}
+{% macro cls_badge(m, short=True) -%}
+<span class="cls-badge" style="color:{{ m.colour }};background:{{ m.tint }};border-color:{{ m.colour }}33">
+  <i class="bi bi-{{ m.icon }}"></i> {{ m.short if short else m.label }}
+</span>
+{%- endmacro %}
+
 {% block topbar_actions %}
+{% if role != 'Tenant' %}
+<a class="btn-ghost" href="{{ url_for('maintenance_calendar') }}" style="margin-right:8px">
+  <i class="bi bi-calendar-check"></i> <span class="hide-mobile">Preventive Calendar</span>
+</a>
+{% endif %}
 <button class="btn-cr" onclick="openModal('newSRModal')">
   <i class="bi bi-plus-lg"></i> <span class="hide-mobile">{% if role=='Tenant' %}Report Issue{% else %}New Request{% endif %}</span>
 </button>
@@ -14,19 +26,47 @@
 <style>
   /* Summary Grid */
   .sr-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
-  
+
   /* Ticket Item Layout */
   .ticket-row { padding: 16px 20px; border-bottom: 1px solid var(--bd); transition: background .15s, transform .1s; cursor: pointer; }
   .ticket-row:hover { background: #FAFCFF; }
   .ticket-row:active { background: #F3F8FF; }
-  .ticket-content { display: flex; flex-direction: column; gap: 12px; }
-  
+
+  /* Classification labels */
+  .cls-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; border: 1px solid; white-space: nowrap; }
+  .due-chip { font-size: 11.5px; font-weight: 600; }
+  .due-chip.late { color: var(--cr); }
+
   /* Modal Specific Layout */
   .modal-section { font-size: 10px; font-weight: 700; color: var(--mt); text-transform: uppercase; letter-spacing: .12em; border-bottom: 1px solid var(--bd); padding-bottom: 6px; margin: 24px 0 12px; }
   .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; font-size: 13.5px; }
   .detail-lbl { color: var(--mt); font-size: 11px; text-transform: uppercase; font-weight: 600; margin-bottom: 2px; }
   .detail-val { color: var(--tx); font-weight: 500; }
-  
+
+  /* Staff classification screen: two columns */
+  .modal-box.wide { max-width: 920px; }
+  .cls-screen { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .cls-col-title { font-size: 13px; font-weight: 700; color: var(--nv); margin-bottom: 12px; }
+  .orig-pick { border-left: 4px solid; border-radius: 8px; padding: 12px 14px; margin-bottom: 4px; }
+  .orig-pick .lbl { font-size: 13px; font-weight: 700; }
+  .orig-pick .desc { font-size: 12px; color: var(--tx); margin-top: 4px; line-height: 1.5; }
+  .cls-options { display: flex; flex-direction: column; gap: 8px; }
+  .cls-opt { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: #fff; border: 1.5px solid var(--bd); border-left: 5px solid var(--c); border-radius: 10px; padding: 10px 12px; cursor: pointer; font: inherit; transition: background .12s, box-shadow .12s; }
+  .cls-opt:hover { background: var(--t); }
+  .cls-opt.current { background: var(--t); box-shadow: 0 0 0 2px var(--c) inset; cursor: default; }
+  .cls-opt > i { color: var(--c); font-size: 18px; margin-top: 1px; }
+  .cls-opt .nm { font-size: 13px; font-weight: 700; color: var(--tx); }
+  .cls-opt .nt { font-size: 11.5px; color: var(--mt); margin-top: 2px; line-height: 1.4; }
+  .cls-opt .rt { font-size: 11.5px; font-weight: 600; color: var(--c); margin-top: 3px; }
+  .cls-opt .now { margin-left: auto; font-size: 10px; font-weight: 700; color: var(--c); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+  .wf-box { border-radius: 8px; padding: 12px 14px; font-size: 12.5px; line-height: 1.55; margin-top: 12px; border: 1px solid var(--bd); background: var(--bg); }
+
+  /* Tenant issue-type picker */
+  .issue-desc { display: none; margin-top: 10px; border-left: 4px solid; border-radius: 8px; padding: 12px 14px; font-size: 12.5px; line-height: 1.55; }
+  .issue-desc.show { display: block; }
+  .issue-desc .hd { font-weight: 700; font-size: 13px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+  .issue-desc .eta { margin-top: 6px; font-weight: 600; }
+
   /* Technician Ratings */
   .star-display { color: #F59E0B; letter-spacing: 1px; }
   .star-display .bi-star { opacity: .35; }
@@ -36,15 +76,12 @@
   .tech-rating-row { display:flex; align-items:center; justify-content:space-between; padding:11px 20px; border-bottom:1px solid var(--bg); font-size:13px; }
   .tech-rating-row:last-child { border-bottom:none; }
 
-  /* Responsive Adjustments */
-  @media (max-width: 992px) {
-    .sr-stat-grid { grid-template-columns: repeat(3, 1fr); }
-  }
   @media (max-width: 768px) {
     .sr-stat-grid { grid-template-columns: 1fr; }
     .ticket-row .df.aic { flex-direction: column; align-items: flex-start; }
     .ticket-actions { width: 100%; justify-content: flex-start; margin-top: 10px; }
     .hide-mobile { display: none; }
+    .cls-screen { grid-template-columns: 1fr; }
   }
 </style>
 {% endblock %}
@@ -87,27 +124,51 @@
   <div class="card-hdr">
     <span class="card-title">{% if role=='Tenant' %}My Requests{% else %}All Requests{% endif %}</span>
   </div>
-  
+
   <div style="padding:6px 0">
   {% for t in tickets %}
     {% set sic={'open':'circle-fill','in-progress':'arrow-repeat','resolved':'check-circle-fill'} %}
     {% set sc={'open':'cr','in-progress':'nv','resolved':'gr'} %}
-    
+
     <div class="ticket-row" onclick="openModal('viewTicket_{{ t.id }}')">
       <div class="df aic" style="justify-content:space-between; flex-wrap: wrap;">
-        
+
         <div style="flex:1; min-width: 200px;">
           <div class="df aic g8" style="margin-bottom:6px; flex-wrap:wrap;">
             <i class="bi bi-{{ sic[t.status] }} text-{{ sc[t.status] }}"></i>
             <span class="fw7" style="font-size:14.5px">{{ t.title }}</span>
-            <span class="badge b-{{ t.priority }}">{{ t.priority }}</span>
+            {% if role == 'Tenant' %}
+              {{ cls_badge(t.tenant_cls) }}
+            {% else %}
+              {{ cls_badge(t.cls) }}
+              {% if t.classification != t.tenant_category %}
+              <span style="font-size:11px;color:var(--mt)">tenant said {{ t.tenant_cls.short }}</span>
+              {% endif %}
+              {% if t.approval_status == 'pending' %}
+              <span class="badge b-pending">awaiting landlord</span>
+              {% elif t.approval_status == 'rejected' %}
+              <span class="badge b-overdue">landlord declined</span>
+              {% elif t.approval_status == 'approved' %}
+              <span class="badge b-paid">landlord approved</span>
+              {% endif %}
+            {% endif %}
             <span class="badge" style="background:#F1F5F9;color:var(--mt);border-color:var(--bd)">{{ t.category }}</span>
           </div>
-          
+
           <div style="font-size:12px;color:var(--mt);display:flex; gap:12px; flex-wrap:wrap;">
-            <span><i class="bi bi-geo-alt"></i> {{ t.prop.name }} · Unit {{ t.unit.unit_number if t.unit else '-' }}</span>
+            <span><i class="bi bi-geo-alt"></i> {{ t.prop.name if t.prop else '-' }} · {{ t.unit.unit_number if t.unit else 'Unit -' }}</span>
             <span><i class="bi bi-person"></i> {{ t.tenant.name }}</span>
             <span><i class="bi bi-calendar3"></i> {{ t.date_raised.strftime('%b %d, %Y') if t.date_raised else '-' }}</span>
+            {% if role != 'Tenant' and t.status == 'open' and t.response_due_at %}
+            <span class="due-chip {{ 'late' if t.is_response_overdue }}">
+              <i class="bi bi-stopwatch"></i>
+              {{ 'Response overdue since' if t.is_response_overdue else 'Respond by' }}
+              {{ t.response_due_at.strftime('%b %d, %H:%M') }}
+            </span>
+            {% endif %}
+            {% if t.classification == 'scheduled' and t.scheduled_for and role != 'Tenant' %}
+            <span style="color:#2563EB;font-weight:600"><i class="bi bi-calendar-check"></i> {{ t.scheduled_for.strftime('%b %d, %Y') }}</span>
+            {% endif %}
           </div>
 
           {% set reported = attachments_for('ticket', t.id, 'attachment') %}
@@ -126,7 +187,7 @@
             </div>
           {% endif %}
         </div>
-        
+
         {# Proof-of-completion modal for this ticket #}
         {% if (role == 'Landlord' or (role == 'Admin' and has_perm('edit_maintenance'))) and t.status != 'resolved' %}
         <div class="modal-ov" id="resolve_{{ t.id }}" onclick="event.stopPropagation()">
@@ -163,11 +224,15 @@
 
         <div class="df g8 ticket-actions" style="flex-shrink:0;" onclick="event.stopPropagation()">
           <span class="badge b-{{ t.status }}" style="padding:6px 12px;font-size:12px">{{ t.status }}</span>
-          
+
+          {% if can_classify %}
+          <button class="btn-ghost sm" onclick="openModal('viewTicket_{{ t.id }}')"><i class="bi bi-tags"></i> Classify</button>
+          {% endif %}
+
           {% if role == 'Admin' and t.status == 'open' %}
           <button class="btn-nv sm" onclick="openModal('assign_{{ t.id }}')"><i class="bi bi-person-check"></i> Assign</button>
           {% endif %}
-          
+
           {% if (role == 'Landlord' or (role == 'Admin' and has_perm('edit_maintenance'))) and t.status != 'resolved' %}
           <button class="btn-ghost sm" onclick="openModal('resolve_{{ t.id }}')">
             <i class="bi bi-check-lg"></i> Resolve
@@ -186,7 +251,7 @@
             {% endif %}
           {% endif %}
         </div>
-        
+
       </div>
     </div>
   {% else %}
@@ -200,118 +265,268 @@
 ══════════════════════════════════════════════════════════════ #}
 
 {% for t in tickets %}
+{% set landlord_can_decide = t.approval_status == 'pending' and role != 'Tenant'
+     and ((t.prop and t.prop.landlord_id == session.user_id) or has_perm('manage_properties')) %}
 <div class="modal-ov" id="viewTicket_{{ t.id }}">
-  <div class="modal-box" style="max-width: 550px;">
+  <div class="modal-box {{ 'wide' if can_classify }}">
     <div class="modal-hdr">
-      <span class="modal-title">Ticket Details</span>
+      <span class="modal-title">{% if can_classify %}Maintenance Request Classification{% else %}Ticket Details{% endif %}</span>
       <button class="modal-close" onclick="closeModal('viewTicket_{{ t.id }}')">&times;</button>
     </div>
-    <div class="modal-body" style="max-height: 75vh; overflow-y: auto;">
-      
-      <div style="margin-bottom: 20px;">
-        <h3 class="syne" style="font-size: 20px; color: var(--nv); margin-bottom: 8px;">{{ t.title }}</h3>
-        <div class="df g8 aic" style="flex-wrap: wrap;">
-          <span class="badge b-{{ t.status }}">{{ t.status }}</span>
-          <span class="badge b-{{ t.priority }}">{{ t.priority }}</span>
-          <span style="font-size: 12px; color: var(--mt);"><i class="bi bi-calendar3"></i> {{ t.date }}</span>
-        </div>
-      </div>
+    <div class="modal-body" style="max-height: 78vh; overflow-y: auto;">
 
-      <div class="modal-section" style="margin-top: 0;">Request Information</div>
-      <div class="detail-grid">
-        <div>
-          <div class="detail-lbl">Property & Unit</div>
-          <div class="detail-val">{{ t.prop.name }} <span style="color:var(--mt)">· {{ t.unit.unit_number }}</span></div>
-        </div>
-        <div>
-          <div class="detail-lbl">Tenant</div>
-          <div class="detail-val">{{ t.tenant.name }}</div>
-        </div>
-        <div>
-          <div class="detail-lbl">Category</div>
-          <div class="detail-val">{{ t.category }}</div>
-        </div>
-        <div>
-          <div class="detail-lbl">Ticket ID</div>
-          <div class="detail-val">#{{ t.id }}</div>
-        </div>
-      </div>
+      <div class="{{ 'cls-screen' if can_classify }}">
 
-      <div class="modal-section">Description</div>
-      <div style="font-size: 14px; color: var(--tx); line-height: 1.6; background: var(--bg); padding: 16px; border-radius: 8px;">
-        {{ t.description | default('No description provided by the tenant.', true) }}
-      </div>
+      {# ── Left column: the tenant's original selection and request details ── #}
+      <div>
+        {% if can_classify %}<div class="cls-col-title">Tenant's request</div>{% endif %}
+        <div style="margin-bottom: 16px;">
+          <h3 class="syne" style="font-size: 20px; color: var(--nv); margin-bottom: 8px;">{{ t.title }}</h3>
+          <div class="df g8 aic" style="flex-wrap: wrap;">
+            <span class="badge b-{{ t.status }}">{{ t.status }}</span>
+            <span style="font-size: 12px; color: var(--mt);"><i class="bi bi-calendar3"></i> {{ t.date_raised.strftime('%b %d, %Y %H:%M') if t.date_raised else '-' }}</span>
+          </div>
+        </div>
 
-      <div class="modal-section">Assignment & Status</div>
-      {% if t.technician %}
-        <div style="display: flex; gap: 12px; align-items: center; background: rgba(13,58,107,.04); padding: 14px; border-radius: 8px; border: 1px solid rgba(13,58,107,.1);">
-          <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--nv); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700;">
-            <i class="bi bi-wrench"></i>
+        {% set o = t.tenant_cls %}
+        <div class="detail-lbl">{{ "Tenant's original selection" if role != 'Tenant' else 'Type of issue' }}</div>
+        <div class="orig-pick" style="border-color:{{ o.colour }};background:{{ o.tint }}">
+          <div class="lbl" style="color:{{ o.colour }}"><i class="bi bi-{{ o.icon }}"></i> {{ o.label }}</div>
+          <div class="desc">{{ o.tenant_desc }}</div>
+          {% if role == 'Tenant' and o.tenant_eta %}
+          <div class="desc" style="font-weight:600">Estimated response: {{ o.tenant_eta }}</div>
+          {% endif %}
+        </div>
+
+        <div class="modal-section">Request Information</div>
+        <div class="detail-grid">
+          <div>
+            <div class="detail-lbl">Property & Unit</div>
+            <div class="detail-val">{{ t.prop.name if t.prop else '-' }} <span style="color:var(--mt)">· {{ t.unit.unit_number if t.unit else '-' }}</span></div>
           </div>
           <div>
-            <div style="font-weight: 700; font-size: 14.5px; color: var(--nv);">{{ t.technician }}</div>
-            <div style="font-size: 12px; color: var(--mt);">Assigned Technician</div>
+            <div class="detail-lbl">Tenant</div>
+            <div class="detail-val">{{ t.tenant.name }}</div>
+          </div>
+          <div>
+            <div class="detail-lbl">Area</div>
+            <div class="detail-val">{{ t.category }}</div>
+          </div>
+          <div>
+            <div class="detail-lbl">Ticket</div>
+            <div class="detail-val">{{ t.ticket_number }}</div>
           </div>
         </div>
-      {% else %}
-        <div style="font-size: 13.5px; color: var(--mt); font-style: italic; background: #fff; border: 1px dashed var(--bd); padding: 14px; border-radius: 8px; text-align: center;">
-          <i class="bi bi-person-x" style="font-size: 18px; display: block; margin-bottom: 4px; opacity: 0.5;"></i>
-          No technician assigned yet.
-        </div>
-      {% endif %}
 
-      {% if t.rating %}
-      <div class="modal-section">Tenant Rating</div>
-      <div style="background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.25); padding: 14px; border-radius: 8px;">
-        <div class="star-display" style="font-size:16px">
-          {% for i in range(t.rating.stars) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - t.rating.stars) %}<i class="bi bi-star"></i>{% endfor %}
-          <span style="font-size:13px;color:var(--mt);margin-left:6px">{{ t.rating.stars }}/5 · {{ t.rating.created_at.strftime('%b %d, %Y') }}</span>
+        <div class="modal-section">Description</div>
+        <div style="font-size: 14px; color: var(--tx); line-height: 1.6; background: var(--bg); padding: 16px; border-radius: 8px;">
+          {{ t.description | default('No description provided by the tenant.', true) }}
         </div>
-        {% if t.rating.comment %}
-        <div style="font-size:13px;color:var(--tx);margin-top:8px;line-height:1.5">"{{ t.rating.comment }}"</div>
+        {{ attach_list(attachments_for('ticket', t.id, 'attachment'), title='Reported with') }}
+
+        <div class="modal-section">Assignment & Status</div>
+        {% if t.technician %}
+          <div style="display: flex; gap: 12px; align-items: center; background: rgba(13,58,107,.04); padding: 14px; border-radius: 8px; border: 1px solid rgba(13,58,107,.1);">
+            <div style="width: 40px; height: 40px; border-radius: 50%; background: var(--nv); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700;">
+              <i class="bi bi-wrench"></i>
+            </div>
+            <div>
+              <div style="font-weight: 700; font-size: 14.5px; color: var(--nv);">{{ t.technician }}</div>
+              <div style="font-size: 12px; color: var(--mt);">Assigned Technician</div>
+            </div>
+          </div>
+        {% else %}
+          <div style="font-size: 13.5px; color: var(--mt); font-style: italic; background: #fff; border: 1px dashed var(--bd); padding: 14px; border-radius: 8px; text-align: center;">
+            <i class="bi bi-person-x" style="font-size: 18px; display: block; margin-bottom: 4px; opacity: 0.5;"></i>
+            No technician assigned yet.
+          </div>
+        {% endif %}
+
+        {% if t.rating %}
+        <div class="modal-section">Tenant Rating</div>
+        <div style="background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.25); padding: 14px; border-radius: 8px;">
+          <div class="star-display" style="font-size:16px">
+            {% for i in range(t.rating.stars) %}<i class="bi bi-star-fill"></i>{% endfor %}{% for i in range(5 - t.rating.stars) %}<i class="bi bi-star"></i>{% endfor %}
+            <span style="font-size:13px;color:var(--mt);margin-left:6px">{{ t.rating.stars }}/5 · {{ t.rating.created_at.strftime('%b %d, %Y') }}</span>
+          </div>
+          {% if t.rating.comment %}
+          <div style="font-size:13px;color:var(--tx);margin-top:8px;line-height:1.5">"{{ t.rating.comment }}"</div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {# Landlord (non-staff) view of a pending approval #}
+        {% if not can_classify and role == 'Landlord' and t.classification == 'landlord_approval' %}
+          <div class="modal-section">Your Approval</div>
+          {% include "_approval_box.html" %}
+        {% endif %}
+      </div>
+
+      {# ── Right column: internal classification and workflow actions ── #}
+      {% if can_classify %}
+      <div>
+        <div class="cls-col-title">Internal classification</div>
+        <form method="POST" action="{{ url_for('classify_ticket', ticket_id=t.id) }}" class="cls-options">
+          {% for key, m in classes.items() %}
+          {% set needs = key in ('scheduled', 'tenant_responsibility', 'landlord_approval') %}
+          <button type="{{ 'button' if needs or key == t.classification else 'submit' }}"
+                  name="classification" value="{{ key }}"
+                  class="cls-opt {{ 'current' if key == t.classification }}"
+                  style="--c:{{ m.colour }};--t:{{ m.tint }}"
+                  {% if needs and key != t.classification %}onclick="openClassifyPrompt('{{ key }}', {{ t.id }}, {{ t.ticket_number | tojson | forceescape }})"{% endif %}>
+            <i class="bi bi-{{ m.icon }}"></i>
+            <span>
+              <div class="nm">{{ m.label }}</div>
+              <div class="nt">{{ m.internal_note }}</div>
+              <div class="rt">{{ m.response }}</div>
+            </span>
+            {% if key == t.classification %}<span class="now">Current</span>{% endif %}
+          </button>
+          {% endfor %}
+        </form>
+
+        {# Workflow detail for the current classification #}
+        {% if t.response_due_at and t.status == 'open' %}
+        <div class="wf-box" {% if t.is_response_overdue %}style="border-color:#FECACA;background:#FEF2F2"{% endif %}>
+          <i class="bi bi-stopwatch"></i>
+          {% if t.is_response_overdue %}<strong style="color:var(--cr)">Response overdue</strong> &mdash; was due{% else %}Respond by{% endif %}
+          <strong>{{ t.response_due_at.strftime('%b %d, %Y %H:%M') }}</strong> (UTC)
+        </div>
+        {% endif %}
+        {% if t.classification == 'scheduled' %}
+        <div class="wf-box" style="border-color:#BFDBFE;background:#EFF6FF">
+          <i class="bi bi-calendar-check" style="color:#2563EB"></i>
+          On the preventive maintenance calendar for
+          <strong>{{ t.scheduled_for.strftime('%A, %b %d, %Y') if t.scheduled_for else 'no date yet' }}</strong>.
+          <a href="#" onclick="openClassifyPrompt('scheduled', {{ t.id }}, {{ t.ticket_number | tojson | forceescape }});return false">Change date</a>
+          · <a href="{{ url_for('maintenance_calendar', month=t.scheduled_for.strftime('%Y-%m') if t.scheduled_for else None) }}">Open calendar</a>
+        </div>
+        {% elif t.classification == 'tenant_responsibility' %}
+        <div class="wf-box">
+          <div><strong>Charge estimate:</strong> {{ fmt(t.charge_estimate or 0) }}</div>
+          <div><strong>Reason:</strong> {{ t.charge_reason or '-' }}</div>
+          <a href="#" onclick="openClassifyPrompt('tenant_responsibility', {{ t.id }}, {{ t.ticket_number | tojson | forceescape }}, {{ (t.charge_estimate or '') | tojson | forceescape }}, {{ (t.charge_reason or '') | tojson | forceescape }});return false">Edit charge</a>
+        </div>
+        {% elif t.classification == 'landlord_approval' %}
+        <div class="wf-box" style="border-color:#DDD6FE;background:#F5F3FF">
+          {% include "_approval_box.html" %}
+        </div>
+        {% endif %}
+        {% if t.classified_by %}
+        <div style="font-size:11.5px;color:var(--mt);margin-top:10px">
+          Last classified by {{ t.classified_by.name }} · {{ t.classified_at.strftime('%b %d, %Y %H:%M') if t.classified_at }}
+        </div>
         {% endif %}
       </div>
       {% endif %}
 
+      </div>
     </div>
   </div>
 </div>
 {% endfor %}
+
+{# ── Pop-ups for classifications that need more than one click ── #}
+{% if can_classify %}
+<div class="modal-ov" id="promptCharge">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-brush" style="color:#64748B"></i> Add charge estimate and reason</span>
+      <button class="modal-close" onclick="closeModal('promptCharge')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="prompt-ref" style="font-size:12.5px;color:var(--mt);margin-bottom:12px"></p>
+      <form method="POST" data-action="{{ url_for('classify_ticket', ticket_id=0) }}">
+        <input type="hidden" name="classification" value="tenant_responsibility"/>
+        <div class="fg">
+          <label class="form-label">Charge estimate (₦)</label>
+          <input class="form-ctrl" type="number" name="charge_estimate" min="0" step="0.01" required/>
+        </div>
+        <div class="fg">
+          <label class="form-label">Reason</label>
+          <textarea class="form-ctrl" name="charge_reason" rows="3" maxlength="300" required
+                    placeholder="e.g. Replacement keys - tenant lost the originals"></textarea>
+        </div>
+        <div class="df g8">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('promptCharge')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center">Save as Chargeable</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal-ov" id="promptApproval">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-file-earmark-check" style="color:#7C3AED"></i> Send approval request to landlord?</span>
+      <button class="modal-close" onclick="closeModal('promptApproval')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="prompt-ref" style="font-size:12.5px;color:var(--mt);margin-bottom:12px"></p>
+      <form method="POST" data-action="{{ url_for('classify_ticket', ticket_id=0) }}">
+        <input type="hidden" name="classification" value="landlord_approval"/>
+        <div class="fg">
+          <label class="form-label">Note to the landlord <span style="font-weight:400;font-size:10px">(optional)</span></label>
+          <textarea class="form-ctrl" name="approval_note" rows="3"
+                    placeholder="e.g. Water heater needs replacing, quote ₦180,000"></textarea>
+        </div>
+        <div class="df g8">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('promptApproval')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center">Send Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal-ov" id="promptSchedule">
+  <div class="modal-box" style="max-width:400px">
+    <div class="modal-hdr">
+      <span class="modal-title"><i class="bi bi-calendar-check" style="color:#2563EB"></i> Schedule preventive maintenance</span>
+      <button class="modal-close" onclick="closeModal('promptSchedule')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="prompt-ref" style="font-size:12.5px;color:var(--mt);margin-bottom:12px"></p>
+      <form method="POST" data-action="{{ url_for('classify_ticket', ticket_id=0) }}">
+        <input type="hidden" name="classification" value="scheduled"/>
+        <div class="fg">
+          <label class="form-label">Date on the calendar</label>
+          <input class="form-ctrl" type="date" name="scheduled_for" required/>
+        </div>
+        <div class="df g8">
+          <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('promptSchedule')">Cancel</button>
+          <button type="submit" class="btn-nv" style="flex:1;justify-content:center">Add to Calendar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% if role == 'Admin' %}
   {% for t in tickets if t.status == 'open' %}
   <div class="modal-ov" id="assign_{{ t.id }}">
     <div class="modal-box">
       <div class="modal-hdr">
-        <span class="modal-title">Assign & Prioritize</span>
+        <span class="modal-title">Assign Technician</span>
         <button class="modal-close" onclick="closeModal('assign_{{ t.id }}')">&times;</button>
       </div>
       <div class="modal-body">
+        <div class="df aic g8" style="margin-bottom:14px">{{ cls_badge(t.cls, short=False) }}</div>
         <form method="POST" action="{{ url_for('assign_ticket', ticket_id=t.id) }}">
-          
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-            <div class="fg" style="margin-bottom:0;">
-              <label class="form-label">Technician</label>
-              <select class="form-sel" name="technician">
-                {% for tc in technicians %}<option value="{{ tc }}">{{ tc }}</option>{% endfor %}
-              </select>
-            </div>
-            <div class="fg" style="margin-bottom:0;">
-              <label class="form-label">Priority</label>
-              <select class="form-sel" name="priority">
-                <option value="low" {% if t.priority == 'low' %}selected{% endif %}>Low</option>
-                <option value="medium" {% if t.priority == 'medium' %}selected{% endif %}>Medium</option>
-                <option value="high" {% if t.priority == 'high' %}selected{% endif %}>High</option>
-                <option value="urgent" {% if t.priority == 'urgent' %}selected{% endif %}>Urgent</option>
-              </select>
-            </div>
+          <div class="fg">
+            <label class="form-label">Technician</label>
+            <select class="form-sel" name="technician">
+              {% for tc in technicians %}<option value="{{ tc }}">{{ tc }}</option>{% endfor %}
+            </select>
           </div>
-          
+
           <div class="fg">
             <label class="form-label">Note</label>
             <textarea class="form-ctrl" name="note" rows="2" placeholder="Instructions…"></textarea>
           </div>
-          
+
           <div class="df g8">
             <button type="button" class="btn-ghost" style="flex:1" onclick="closeModal('assign_{{ t.id }}')">Cancel</button>
             <button type="submit" class="btn-nv" style="flex:1">Assign Request</button>
@@ -381,16 +596,48 @@
 <div class="modal-ov" id="newSRModal">
   <div class="modal-box">
     <div class="modal-hdr">
-      <span class="modal-title">New Request</span>
+      <span class="modal-title">{% if role == 'Tenant' %}Report an Issue{% else %}New Request{% endif %}</span>
       <button class="modal-close" onclick="closeModal('newSRModal')">&times;</button>
     </div>
     <div class="modal-body">
       <form method="POST" action="{{ url_for('submit_service') }}" enctype="multipart/form-data">
         <div class="fg">
+          <label class="form-label">Select the Type of Issue</label>
+          <select class="form-sel" name="issue_type" id="issueType" required onchange="showIssueDesc(this.value)">
+            <option value="" disabled selected>Select the Type of Issue…</option>
+            {% for key in tenant_classes %}
+            <option value="{{ key }}">{{ classes[key].label }}</option>
+            {% endfor %}
+            {% if can_classify %}
+            <optgroup label="Staff only">
+              {% for key, m in classes.items() if key not in tenant_classes %}
+              <option value="{{ key }}">{{ m.label }}</option>
+              {% endfor %}
+            </optgroup>
+            {% endif %}
+          </select>
+          {% for key, m in classes.items() if key in tenant_classes or can_classify %}
+          <div class="issue-desc" id="issueDesc_{{ key }}" style="border-color:{{ m.colour }};background:{{ m.tint }}">
+            <div class="hd" style="color:{{ m.colour }}"><i class="bi bi-{{ m.icon }}"></i> {{ m.label }}</div>
+            <div>{{ m.tenant_desc or m.internal_note }}</div>
+            {% if m.tenant_eta %}
+            <div class="eta" style="color:{{ m.colour }}">Estimated response time: {{ m.tenant_eta }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+          {% if can_classify %}
+          <div class="fg" id="newScheduleDate" style="display:none;margin-top:10px">
+            <label class="form-label">Date on the preventive maintenance calendar</label>
+            <input class="form-ctrl" type="date" name="scheduled_for"/>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="fg">
           <label class="form-label">Issue Title</label>
           <input class="form-ctrl" name="title" required/>
         </div>
-        
+
         <div class="g2" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
           <div class="fg" style="margin-bottom:0;">
             <label class="form-label">Property</label>
@@ -399,32 +646,13 @@
             </select>
           </div>
           <div class="fg" style="margin-bottom:0;">
-            <label class="form-label">Unit</label>
-            <input class="form-ctrl" name="unit"/>
-          </div>
-        </div>
-        
-        <div class="g2" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-          <div class="fg" style="margin-bottom:0; grid-column: {% if role != 'Admin' %}span 2{% else %}span 1{% endif %};">
-            <label class="form-label">Category</label>
+            <label class="form-label">Area</label>
             <select class="form-sel" name="category">
               <option>Plumbing</option><option>Electrical</option><option>HVAC</option><option>General</option>
             </select>
           </div>
-          
-          {% if role == 'Admin' %}
-          <div class="fg" style="margin-bottom:0;">
-            <label class="form-label">Priority</label>
-            <select class="form-sel" name="priority">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </div>
-          {% endif %}
         </div>
-        
+
         <div class="fg">
           <label class="form-label">Description</label>
           <textarea class="form-ctrl" name="description" rows="3"></textarea>
@@ -439,4 +667,44 @@
 
 {% block extra_scripts %}
 {{ attach_script() }}
+<script>
+function showIssueDesc(key) {
+  document.querySelectorAll('.issue-desc').forEach(function (el) {
+    el.classList.toggle('show', el.id === 'issueDesc_' + key);
+  });
+  var sched = document.getElementById('newScheduleDate');
+  if (sched) {
+    sched.style.display = key === 'scheduled' ? 'block' : 'none';
+    sched.querySelector('input').required = key === 'scheduled';
+  }
+}
+
+{% if can_classify %}
+var PROMPTS = {scheduled: 'promptSchedule', tenant_responsibility: 'promptCharge',
+               landlord_approval: 'promptApproval'};
+function openClassifyPrompt(key, ticketId, ticketNumber, amount, reason) {
+  var modal = document.getElementById(PROMPTS[key]);
+  var form  = modal.querySelector('form');
+  form.action = form.dataset.action.replace('/0/', '/' + ticketId + '/');
+  modal.querySelector('.prompt-ref').textContent = 'Request ' + ticketNumber;
+  if (key === 'tenant_responsibility') {
+    form.charge_estimate.value = amount || '';
+    form.charge_reason.value   = reason || '';
+  }
+  if (key === 'scheduled' && !form.scheduled_for.value) {
+    var d = new Date(); d.setDate(d.getDate() + 7);
+    form.scheduled_for.value = d.toISOString().slice(0, 10);
+  }
+  openModal(PROMPTS[key]);
+}
+{% endif %}
+
+// Re-open the request that was just acted on, so the result is visible.
+{% if open_ticket %}
+document.addEventListener('DOMContentLoaded', function () {
+  var m = document.getElementById('viewTicket_{{ open_ticket }}');
+  if (m) openModal(m.id);
+});
+{% endif %}
+</script>
 {% endblock %}

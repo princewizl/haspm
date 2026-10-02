@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Preventive Maintenance Calendar{% endblock %}
+{% block page_title %}Preventive Maintenance{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn-ghost" href="{{ url_for('service') }}"><i class="bi bi-arrow-left"></i> <span class="hide-mobile">Service Requests</span></a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  .cal-nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--bd); }
+  .cal-nav h2 { font-size: 18px; color: var(--nv); margin: 0; }
+  .cal { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .cal th { font-size: 11px; font-weight: 700; color: var(--mt); text-transform: uppercase; letter-spacing: .08em; padding: 10px 6px; border-bottom: 1px solid var(--bd); }
+  .cal td { vertical-align: top; height: 110px; border: 1px solid var(--bd); padding: 6px; }
+  .cal td.empty { background: var(--bg); }
+  .cal td.today { background: #EFF6FF; }
+  .cal .day { font-size: 12px; font-weight: 700; color: var(--mt); margin-bottom: 4px; }
+  .cal td.today .day { color: #2563EB; }
+  .cal-task { display: block; font-size: 11.5px; line-height: 1.35; padding: 4px 6px; margin-bottom: 4px; border-radius: 6px; background: #EFF6FF; border-left: 3px solid #2563EB; color: var(--tx); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-task:hover { background: #DBEAFE; }
+  .cal-task.done { opacity: .55; text-decoration: line-through; }
+  .cal-list { display: none; }
+  @media (max-width: 768px) {
+    .cal { display: none; }
+    .cal-list { display: block; padding: 6px 0; }
+    .hide-mobile { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="cal-nav">
+    <a class="btn-ghost sm" href="{{ url_for('maintenance_calendar', month=prev_month) }}"><i class="bi bi-chevron-left"></i></a>
+    <h2 class="syne">{{ month_label }}</h2>
+    <a class="btn-ghost sm" href="{{ url_for('maintenance_calendar', month=next_month) }}"><i class="bi bi-chevron-right"></i></a>
+  </div>
+
+  <table class="cal">
+    <thead><tr>{% for d in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th>{{ d }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for week in weeks %}
+      <tr>
+        {% for day in week %}
+          {% if day == 0 %}
+          <td class="empty"></td>
+          {% else %}
+          <td class="{{ 'today' if today and today.day == day }}">
+            <div class="day">{{ day }}</div>
+            {% for t in by_day.get(day, []) %}
+            <a class="cal-task {{ 'done' if t.status == 'resolved' }}"
+               href="{{ url_for('service', open=t.id) }}"
+               title="{{ t.title }} - {{ t.prop.name if t.prop else '' }}">{{ t.title }}</a>
+            {% endfor %}
+          </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {# Phones get a list instead of a 7-column grid #}
+  <div class="cal-list">
+    {% for day, items in by_day | dictsort %}
+      {% for t in items %}
+      <a href="{{ url_for('service', open=t.id) }}" style="display:block;padding:12px 20px;border-bottom:1px solid var(--bd);text-decoration:none;color:var(--tx)">
+        <div class="fw6" style="font-size:13.5px">{{ t.title }}</div>
+        <div style="font-size:12px;color:var(--mt)">{{ t.scheduled_for.strftime('%a %b %d') }} · {{ t.prop.name if t.prop else '-' }} · {{ t.status }}</div>
+      </a>
+      {% endfor %}
+    {% else %}
+      <div style="padding:30px;text-align:center;color:var(--mt)">Nothing scheduled this month.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<p style="font-size:12.5px;color:var(--mt);margin-top:14px">
+  Requests classified as <strong style="color:#2563EB">Scheduled &ndash; Preventive Maintenance</strong>
+  appear here on their scheduled date.
+  {% if unscheduled %}{{ unscheduled }} scheduled request(s) have no date yet &mdash; set one from the request's classification screen.{% endif %}
+</p>
+{% endblock %}

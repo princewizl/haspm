@@ -63,6 +63,17 @@ def send_overdue_email(app, tenant_email, tenant_name, invoices):
     )
 
 
+def send_notice_email(app, to_email, subject, template, **ctx):
+    """Maintenance alerts and approval requests to staff and landlords."""
+    return _send(
+        app,
+        subject=f"{subject} — HS Property Management",
+        recipients=[to_email],
+        template=template,
+        **ctx,
+    )
+
+
 def send_test_email(app, to_email):
     """Admin test — verify SMTP is working."""
     return _send(

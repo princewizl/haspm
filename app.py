@@ -4,7 +4,7 @@ HS Property Management — Flask Application
 import os
 import json
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from functools import wraps
 from collections import OrderedDict
 from flask import (Flask, render_template, redirect, url_for, Response,
@@ -26,7 +26,7 @@ from finance_routes import register_finance_routes
 from report_routes import register_report_routes
 from message_routes import register_message_routes
 from permissions import register_permissions, has_perm, dept_required, current_dept, DEPARTMENTS
-from mailer import mail, send_test_email
+from mailer import mail, send_test_email, send_notice_email
 from models import db, User, Property, PropertyImage, Unit, Tenancy, Invoice, Transaction, Ticket, TenantDocument, RentLedger, Expense, LandlordPayout, NotificationLog, BankTransferClaim, Message, TechnicianRating, Attachment
 
 # ─────────────────────────────────────────────
@@ -277,7 +277,8 @@ def dashboard():
     pending_c = sum(1 for i in invoices if i.status == "pending")
     overdue_c = sum(1 for i in invoices if i.status == "overdue")
     open_t    = sum(1 for t in tickets if t.status == "open")
-    urgent_t  = sum(1 for t in tickets if t.priority == "urgent" and t.status != "resolved")
+    urgent_t  = sum(1 for t in tickets if t.classification in ("emergency", "urgent")
+                    and t.status != "resolved")
 
     occ_data  = [{"name": p.name, "pct": p.occupancy_pct,
                   "occ": p.occupied_units, "total": p.total_units} for p in properties]
@@ -365,9 +366,22 @@ def properties():
                     "status": inv.status if inv else "—",
                 })
 
+    # Shown in the delete confirmation, so nobody removes history by accident.
+    delete_impact = {}
+    if session["role"] == "Admin" and has_perm("manage_properties"):
+        for p in props:
+            linked = _property_linked_records(p)
+            delete_impact[p.id] = ", ".join(
+                f"{len(linked[k])} {label}" for k, label in (
+                    ("unit_ids", "unit(s)"), ("tenancies", "tenancy(ies)"),
+                    ("invoices", "invoice(s)"), ("transactions", "payment(s)"),
+                    ("tickets", "service request(s)"), ("expenses", "expense(s)"))
+                if linked[k])
+
     return render_template("properties.html",
         properties=props,
         tenants_by_prop=tenants_by_prop,
+        delete_impact=delete_impact,
         role=session["role"],
     )
 
@@ -454,10 +468,10 @@ def edit_property(prop_id):
     if session.get("role") == "Landlord" and prop.landlord_id != session["user_id"]:
         flash("Access denied. You can only edit your own properties.", "danger")
         return redirect(url_for("properties"))
-    prop.name        = request.form.get("name", prop.name).strip()
-    prop.address     = request.form.get("address", prop.address).strip()
+    prop.name        = (request.form.get("name") or prop.name).strip()
+    prop.address     = (request.form.get("address", prop.address) or "").strip()
     prop.type        = request.form.get("type", prop.type)
-    prop.description = request.form.get("description", prop.description).strip()
+    prop.description = (request.form.get("description", prop.description) or "").strip()
     prop.avg_rent    = float(request.form.get("avg_rent", prop.avg_rent) or prop.avg_rent)
 
     if "unit_naming_pattern" in request.form:
@@ -498,14 +512,29 @@ def edit_property(prop_id):
                   "automatically because they carry tenancy and invoice history.",
                   "info")
 
-    if "image" in request.files:
-        new_url = save_property_image(request.files["image"])
-        if new_url:
-            prop.image_url = new_url
+    # Photos: tick existing ones to remove, upload or paste URLs to add more.
+    remove_ids = {int(i) for i in request.form.getlist("remove_images") if i.isdigit()}
+    removed = 0
+    for img in list(prop.images):
+        if img.id in remove_ids:
+            _delete_property_image_file(img.image_url)
+            prop.images.remove(img)
+            removed += 1
 
-    ext_url = request.form.get("image_url", "").strip()
-    if ext_url:
-        prop.image_url = ext_url
+    added = 0
+    for file in request.files.getlist("images"):
+        if file.filename:
+            img_url = save_property_image(file)
+            if img_url:
+                prop.images.append(PropertyImage(image_url=img_url))
+                added += 1
+            else:
+                flash(f"'{file.filename}' was skipped - photos must be "
+                      f"{', '.join(sorted(IMAGE_EXTENSIONS))}.", "danger")
+    for url in request.form.get("image_urls", "").split(","):
+        if url.strip():
+            prop.images.append(PropertyImage(image_url=url.strip()))
+            added += 1
 
     try:
         db.session.commit()
@@ -515,8 +544,59 @@ def edit_property(prop_id):
               "in this property.", "danger")
         return redirect(url_for("properties"))
 
-    flash(f"Property '{prop.name}' updated.", "success")
+    photos = []
+    if added:
+        photos.append(f"{added} photo(s) added")
+    if removed:
+        photos.append(f"{removed} removed")
+    flash(f"Property '{prop.name}' updated"
+          + (f" - {', '.join(photos)}." if photos else "."), "success")
     return redirect(url_for("properties"))
+
+
+def _delete_property_image_file(image_url):
+    """Remove an uploaded property photo from disk. External URLs are left alone."""
+    prefix = url_for("static", filename="uploads/properties/")
+    if image_url and image_url.startswith(prefix):
+        path = os.path.join(app.config["UPLOAD_FOLDER"],
+                            os.path.basename(image_url[len(prefix):]))
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _property_linked_records(prop):
+    """Everything that hangs off a property, grouped for deletion.
+
+    Units cascade from the property in the ORM, but tenancies, invoices,
+    tickets, ledger entries and expenses reference the property or its units
+    with NOT NULL foreign keys and no cascade. Deleting the property alone
+    makes SQLAlchemy try to null those keys, which is the IntegrityError that
+    used to surface on every property with history.
+    """
+    unit_ids = [u.id for u in prop.units]
+    in_units = (lambda col: col.in_(unit_ids)) if unit_ids else (lambda col: db.false())
+
+    tickets  = Ticket.query.filter(db.or_(Ticket.property_id == prop.id,
+                                          in_units(Ticket.unit_id))).all()
+    invoices = Invoice.query.filter(in_units(Invoice.unit_id)).all()
+    invoice_ids = [i.id for i in invoices]
+    return {
+        "unit_ids":     unit_ids,
+        "tickets":      tickets,
+        "invoices":     invoices,
+        "transactions": Transaction.query.filter(Transaction.invoice_id.in_(invoice_ids)).all()
+                        if invoice_ids else [],
+        "claims":       BankTransferClaim.query.filter(
+                            BankTransferClaim.invoice_id.in_(invoice_ids)).all()
+                        if invoice_ids else [],
+        "tenancies":    Tenancy.query.filter(in_units(Tenancy.unit_id)).all(),
+        "ledger":       RentLedger.query.filter(db.or_(RentLedger.property_id == prop.id,
+                                                       in_units(RentLedger.unit_id))).all(),
+        "expenses":     Expense.query.filter(db.or_(Expense.property_id == prop.id,
+                                                    in_units(Expense.unit_id))).all(),
+    }
 
 
 @app.route("/properties/<int:prop_id>/delete", methods=["POST"])
@@ -524,9 +604,44 @@ def edit_property(prop_id):
 def delete_property(prop_id):
     prop = Property.query.get_or_404(prop_id)
     name = prop.name
-    db.session.delete(prop)
-    db.session.commit()
-    flash(f"Property '{name}' deleted.", "success")
+    linked = _property_linked_records(prop)
+
+    # Children before parents, so no foreign key is ever left dangling.
+    files = []
+    for t in linked["tickets"]:
+        TechnicianRating.query.filter_by(ticket_id=t.id).delete()
+        for att in Attachment.query.filter_by(parent_type=Attachment.PARENT_TICKET,
+                                              parent_id=t.id):
+            files.append(os.path.join(_attach_folder(), att.stored_filename))
+            db.session.delete(att)
+        db.session.delete(t)
+    for group in ("claims", "transactions", "invoices", "tenancies", "ledger", "expenses"):
+        for row in linked[group]:
+            db.session.delete(row)
+    image_urls = [img.image_url for img in prop.images]
+    db.session.delete(prop)            # units and images cascade
+
+    try:
+        db.session.commit()
+    except IntegrityError as e:
+        db.session.rollback()
+        app.logger.error("[properties] delete of %s failed: %s", prop_id, e)
+        flash(f"Could not delete '{name}': it is still referenced elsewhere. "
+              "Nothing was removed.", "danger")
+        return redirect(url_for("properties"))
+
+    # Only touch files once the database change is committed.
+    for url in image_urls:
+        _delete_property_image_file(url)
+    for path in files:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    flash(f"Property '{name}' deleted, together with {len(linked['unit_ids'])} unit(s), "
+          f"{len(linked['tenancies'])} tenancy(ies), {len(linked['invoices'])} invoice(s) "
+          f"and {len(linked['tickets'])} service request(s).", "success")
     return redirect(url_for("properties"))
 
 from flask import jsonify
@@ -975,29 +1090,91 @@ def service():
         properties=Property.query.all(),
         role=role,
         rating_summary=rating_summary,
+        classes=Ticket.CLASSES,
+        tenant_classes=Ticket.TENANT_CLASSES,
+        can_classify=_can_classify(),
+        open_ticket=request.args.get("open", type=int),
     )
+
+
+def _can_classify():
+    return session.get("role") == "Admin" and (
+        has_perm("edit_maintenance") or has_perm("log_complaints"))
+
+
+def _post_system_message(sender_id, recipients, subject, body, email_template=None, **ctx):
+    """Drop a message in each recipient's inbox, and email them when SMTP is set.
+
+    The inbox copy is the record; email is best-effort (and always off on test).
+    """
+    for r in recipients:
+        db.session.add(Message(sender_id=sender_id, recipient_id=r.id,
+                               subject=subject[:200], body=body))
+        if email_template and r.email:
+            send_notice_email(app, r.email, subject, email_template,
+                              recipient_name=r.name, body=body, **ctx)
+
+
+def _notify_maintenance_team(ticket, sender_id):
+    """Emergency requests go straight to the Maintenance department."""
+    team = User.query.filter_by(role="Admin", department="Maintenance", is_active=True).all()
+    if not team:
+        # No Maintenance staff set up yet: fall back to Management so an
+        # emergency never lands in nobody's inbox.
+        team = User.query.filter(User.role == "Admin", User.is_active.is_(True),
+                                 db.or_(User.department == "Management",
+                                        User.department.is_(None))).all()
+    unit = f", {ticket.unit.unit_number}" if ticket.unit else ""
+    body = (f"EMERGENCY maintenance request {ticket.ticket_number}\n\n"
+            f"{ticket.title}\n"
+            f"Property: {ticket.prop.name if ticket.prop else '-'}{unit}\n"
+            f"Reported by: {ticket.tenant.name if ticket.tenant else '-'}\n\n"
+            f"{ticket.description or ''}\n\n"
+            f"Respond within 1-4 hours. Open: {url_for('service', _external=True)}")
+    _post_system_message(sender_id, team,
+                         f"EMERGENCY: {ticket.title} ({ticket.ticket_number})", body,
+                         "email/maintenance_notice.html", ticket=ticket,
+                         heading="Emergency maintenance request")
+    return len(team)
 
 
 @app.route("/service/submit", methods=["POST"])
 @login_required
 def submit_service():
-    # If it's an Admin, accept their chosen priority. Otherwise, default to "medium".
-    if session.get("role") == "Admin":
-        priority = request.form.get("priority", "medium").lower()
-    else:
-        priority = "medium"
-        
+    choices = Ticket.CLASSES if _can_classify() else Ticket.TENANT_CLASSES
+    picked  = request.form.get("issue_type", "")
+    if picked not in choices:
+        flash("Please select the type of issue.", "danger")
+        return redirect(url_for("service"))
+
     new_ticket = Ticket(
         ticket_number=f"SR-{str(uuid.uuid4().hex[:6]).upper()}",
         title=request.form.get("title", "New Request"),
         description=request.form.get("description", ""),
         category=request.form.get("category", "General"),
-        priority=priority,
         status="open",
         tenant_id=session["user_id"],
-        property_id=request.form.get("property") # Assuming you link via ID
+        property_id=request.form.get("property"),
+        date_raised=datetime.utcnow(),
+        # Staff-only classes are not a tenant choice; record the closest one.
+        tenant_category=picked if picked in Ticket.TENANT_CLASSES else "routine",
     )
-    
+    new_ticket.apply_classification(picked)
+
+    # A tenant's request belongs to the unit they rent in that property.
+    if session.get("role") == "Tenant":
+        tenancy = Tenancy.query.filter_by(tenant_id=session["user_id"], is_active=True).first()
+        if tenancy and tenancy.unit and str(tenancy.unit.property_id) == str(new_ticket.property_id):
+            new_ticket.unit_id = tenancy.unit_id
+
+    if picked == "scheduled":
+        try:
+            new_ticket.scheduled_for = datetime.strptime(
+                request.form.get("scheduled_for", ""), "%Y-%m-%d").date()
+        except ValueError:
+            flash("Pick a date for the scheduled task.", "danger")
+            return redirect(url_for("service"))
+
     db.session.add(new_ticket)
     db.session.flush()      # need the id before attaching files
 
@@ -1005,12 +1182,22 @@ def submit_service():
         request.files.getlist("attachments"),
         Attachment.PARENT_TICKET, new_ticket.id,
         kind=Attachment.KIND_ATTACHMENT)
+
+    notified = 0
+    if picked == "emergency":
+        notified = _notify_maintenance_team(new_ticket, session["user_id"])
     db.session.commit()
 
     for e in errors:
         flash(e, "danger")
-    flash("Service request submitted successfully!"
-          + (f" {saved} photo/file(s) attached." if saved else ""), "success")
+    msg = "Service request submitted successfully!"
+    if saved:
+        msg += f" {saved} photo/file(s) attached."
+    if picked == "emergency":
+        msg += " The maintenance team has been alerted."
+        app.logger.info("[service] emergency %s alerted %d staff",
+                        new_ticket.ticket_number, notified)
+    flash(msg, "success")
     return redirect(url_for("service"))
 
 
@@ -1018,22 +1205,171 @@ def submit_service():
 @dept_required("edit_maintenance", "log_complaints")
 def assign_ticket(ticket_id):
     ticket = Ticket.query.get_or_404(ticket_id)
-    
-    technician = request.form.get("technician")
-    priority = request.form.get("priority")
-    
-    # Update both the technician and the newly evaluated priority
-    if technician:
-        ticket.technician = technician
-        ticket.status = "in-progress"
-        
-    if priority:
-        ticket.priority = priority.lower()
-        
+    technician = request.form.get("technician", "").strip()
+    if not technician:
+        flash("Choose a technician to assign.", "danger")
+        return redirect(url_for("service"))
+
+    ticket.technician = technician
+    ticket.status = "in-progress"
     db.session.commit()
-    
-    flash(f"Ticket #{ticket.ticket_number} assigned to {technician} as {priority.capitalize()} priority!", "success")
+
+    flash(f"Ticket #{ticket.ticket_number} assigned to {technician}.", "success")
     return redirect(url_for("service"))
+
+
+@app.route("/service/<int:ticket_id>/classify", methods=["POST"])
+@dept_required("edit_maintenance", "log_complaints")
+def classify_ticket(ticket_id):
+    """Staff reclassification, with the follow-up each class asks for."""
+    ticket = Ticket.query.get_or_404(ticket_id)
+    key = request.form.get("classification", "")
+    if key not in Ticket.CLASSES:
+        flash("Unknown classification.", "danger")
+        return redirect(url_for("service"))
+    meta = Ticket.CLASSES[key]
+    was  = ticket.classification
+
+    if key == "tenant_responsibility":
+        try:
+            estimate = float(request.form.get("charge_estimate", ""))
+        except ValueError:
+            estimate = -1
+        reason = request.form.get("charge_reason", "").strip()
+        if estimate < 0 or not reason:
+            flash("Tenant Responsibility needs a charge estimate and a reason.", "danger")
+            return redirect(url_for("service", open=ticket.id))
+        ticket.charge_estimate = estimate
+        ticket.charge_reason   = reason[:300]
+
+    elif key == "scheduled":
+        try:
+            ticket.scheduled_for = datetime.strptime(
+                request.form.get("scheduled_for", ""), "%Y-%m-%d").date()
+        except ValueError:
+            flash("Pick a date to put this on the preventive maintenance calendar.", "danger")
+            return redirect(url_for("service", open=ticket.id))
+
+    elif key == "landlord_approval":
+        landlord = ticket.prop.landlord if ticket.prop else None
+        if not landlord:
+            flash(f"{ticket.prop.name if ticket.prop else 'This property'} has no "
+                  "landlord on record to send the approval request to.", "danger")
+            return redirect(url_for("service", open=ticket.id))
+        note = request.form.get("approval_note", "").strip()
+        ticket.approval_status       = "pending"
+        ticket.approval_note         = note or None
+        ticket.approval_requested_at = datetime.utcnow()
+        ticket.approval_decided_at   = None
+        body = (f"Your approval is needed for maintenance request {ticket.ticket_number} "
+                f"at {ticket.prop.name}.\n\n{ticket.title}\n{ticket.description or ''}\n\n"
+                + (f"Note from our team: {note}\n\n" if note else "")
+                + f"Approve or decline here: {url_for('service', _external=True, open=ticket.id)}")
+        _post_system_message(session["user_id"], [landlord],
+                             f"Approval needed: {ticket.title} ({ticket.ticket_number})",
+                             body, "email/maintenance_notice.html", ticket=ticket,
+                             heading="Landlord approval required")
+
+    ticket.apply_classification(key)
+    ticket.classified_by_id = session["user_id"]
+    ticket.classified_at    = datetime.utcnow()
+
+    if key == "emergency" and was != "emergency":
+        _notify_maintenance_team(ticket, session["user_id"])
+
+    db.session.commit()
+
+    follow_up = {
+        "emergency":             " The maintenance team has been alerted.",
+        "scheduled":             f" Added to the preventive maintenance calendar for "
+                                 f"{ticket.scheduled_for:%b %d, %Y}." if ticket.scheduled_for else "",
+        "tenant_responsibility": " Charge estimate recorded.",
+        "landlord_approval":     " Approval request sent to the landlord.",
+    }.get(key, "")
+    flash(f"{ticket.ticket_number} classified as {meta['label']}.{follow_up}", "success")
+    return redirect(url_for("service", open=ticket.id))
+
+
+@app.route("/service/<int:ticket_id>/approval", methods=["POST"])
+@role_required("Landlord", "Admin")
+def decide_approval(ticket_id):
+    """The landlord approves or declines a Landlord Approval Required request."""
+    ticket = Ticket.query.get_or_404(ticket_id)
+    is_owner = ticket.prop and ticket.prop.landlord_id == session["user_id"]
+    # Management may record a decision the landlord gave by phone or email.
+    if not (is_owner or has_perm("manage_properties")):
+        flash("Only the property's landlord can approve this request.", "danger")
+        return redirect(url_for("service"))
+    if ticket.classification != "landlord_approval" or ticket.approval_status != "pending":
+        flash("This request is not waiting for approval.", "info")
+        return redirect(url_for("service"))
+
+    decision = request.form.get("decision")
+    if decision not in ("approved", "rejected"):
+        flash("Choose approve or decline.", "danger")
+        return redirect(url_for("service", open=ticket.id))
+
+    note = request.form.get("note", "").strip()
+    ticket.approval_status     = decision
+    ticket.approval_decided_at = datetime.utcnow()
+    if note:
+        ticket.approval_note = ((ticket.approval_note + "\n\n") if ticket.approval_note else "") \
+                               + f"Landlord: {note}"
+
+    # Tell whoever asked for the approval.
+    if ticket.classified_by and ticket.classified_by.id != session["user_id"]:
+        verdict = "approved" if decision == "approved" else "declined"
+        _post_system_message(
+            session["user_id"], [ticket.classified_by],
+            f"Landlord {verdict}: {ticket.title} ({ticket.ticket_number})",
+            f"{session.get('user')} {verdict} maintenance request {ticket.ticket_number}."
+            + (f"\n\n{note}" if note else ""))
+    db.session.commit()
+
+    flash(f"{ticket.ticket_number} {'approved' if decision == 'approved' else 'declined'}.",
+          "success")
+    return redirect(url_for("service", open=ticket.id))
+
+
+@app.route("/service/calendar")
+@role_required("Admin", "Landlord")
+def maintenance_calendar():
+    """Preventive maintenance calendar: every Scheduled request, by month."""
+    import calendar as _cal
+    if session["role"] == "Admin" and not (has_perm("view_maintenance_full")
+                                           or has_perm("view_maintenance_status")):
+        flash("Access denied. Your department cannot view maintenance job details.", "danger")
+        return redirect(url_for("dashboard"))
+
+    today = date.today()
+    try:
+        year, month = (int(x) for x in request.args.get("month", "").split("-"))
+        date(year, month, 1)
+    except (ValueError, TypeError):
+        year, month = today.year, today.month
+
+    first = date(year, month, 1)
+    last  = date(year, month, _cal.monthrange(year, month)[1])
+    q = Ticket.query.filter(Ticket.classification == "scheduled",
+                            Ticket.scheduled_for >= first, Ticket.scheduled_for <= last)
+    if session["role"] == "Landlord":
+        q = q.join(Property, Ticket.property_id == Property.id).filter(
+            Property.landlord_id == session["user_id"])
+    by_day = {}
+    for t in q.order_by(Ticket.scheduled_for).all():
+        by_day.setdefault(t.scheduled_for.day, []).append(t)
+
+    prev_m = (first - timedelta(days=1)).strftime("%Y-%m")
+    next_m = (last + timedelta(days=1)).strftime("%Y-%m")
+    return render_template("maintenance_calendar.html",
+        weeks=_cal.Calendar(firstweekday=0).monthdayscalendar(year, month),
+        by_day=by_day, month_label=first.strftime("%B %Y"),
+        prev_month=prev_m, next_month=next_m,
+        today=today if (today.year, today.month) == (year, month) else None,
+        unscheduled=Ticket.query.filter(Ticket.classification == "scheduled",
+                                        Ticket.scheduled_for.is_(None)).count(),
+        role=session["role"],
+    )
 
 
 @app.route("/service/resolve/<int:ticket_id>", methods=["POST"])

@@ -31,7 +31,6 @@
     .sb-brand-sub{font-size:8.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mt);white-space:nowrap;}
     
     .sb-nav{flex:1;padding:14px 10px;overflow-y:auto;}
-    .nav-sec{font-size:9.5px;font-weight:600;color:var(--mt);letter-spacing:.13em;text-transform:uppercase;padding:10px 12px 5px;margin-top:4px;}
     .nav-item{display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:99px;margin-bottom:2px;color:var(--tx);font-size:13px;font-weight:500;transition:all .2s;border-left:3px solid transparent;cursor:pointer;}
     .nav-item:hover{background:var(--bg);color:var(--nv);}
     .nav-item.active{background:var(--cr-l);color:var(--cr);font-weight:500;border-left-color:var(--cr);}
@@ -230,7 +229,6 @@
   </div>
 
   <nav class="sb-nav">
-    <div class="nav-sec">Main</div>
     <a href="{{ url_for('dashboard') }}" class="nav-item {% if request.endpoint=='dashboard' %}active{% endif %}">
       <i class="bi bi-grid-1x2"></i> Dashboard
     </a>
@@ -244,7 +242,6 @@
     </a>
     {% endif %}
 
-    <div class="nav-sec">Finance</div>
     {% if session.role != 'Admin' or has_perm('view_finance_full') or has_perm('view_payment_status') %}
     <a href="{{ url_for('invoices') }}" class="nav-item {% if request.endpoint=='invoices' %}active{% endif %}">
       <i class="bi bi-receipt"></i>
@@ -277,11 +274,16 @@
     </a>
     {% endif %}
 
-    <div class="nav-sec">Operations</div>
     {% if session.role != 'Admin' or has_perm('view_maintenance_full') or has_perm('view_maintenance_status') %}
     <a href="{{ url_for('service') }}" class="nav-item {% if request.endpoint=='service' %}active{% endif %}">
       <i class="bi bi-tools"></i>
       {% if session.role=='Tenant' %}Report Issue{% else %}Service Requests{% endif %}
+    </a>
+    {% endif %}
+
+    {% if session.role == 'Landlord' or (session.role == 'Admin' and (has_perm('view_maintenance_full') or has_perm('view_maintenance_status'))) %}
+    <a href="{{ url_for('maintenance_calendar') }}" class="nav-item {% if request.endpoint=='maintenance_calendar' %}active{% endif %}">
+      <i class="bi bi-calendar-check"></i> Preventive Calendar
     </a>
     {% endif %}
 

@@ -12,6 +12,8 @@ What it does:
      they already held the yearly figure)
   4. unique index on units(property_id, unit_number), after reporting clashes
   5. attachments table
+  6. tickets: maintenance classification columns, existing tickets mapped
+     from their old priority (urgent/high -> Urgent, otherwise Routine)
 
 Run deploy/backup.sh first on anything with real data in it.
 """
@@ -23,6 +25,24 @@ from app import app
 from models import db
 
 DRY = "--dry-run" in sys.argv
+
+TICKET_COLUMNS = [
+    ("tenant_category",       "VARCHAR(30)"),
+    ("classification",        "VARCHAR(30)"),
+    ("classified_by_id",      "INTEGER"),
+    ("classified_at",         "TIMESTAMP"),
+    ("response_due_at",       "TIMESTAMP"),
+    ("scheduled_for",         "DATE"),
+    ("charge_estimate",       "FLOAT"),
+    ("charge_reason",         "VARCHAR(300)"),
+    ("approval_status",       "VARCHAR(20)"),
+    ("approval_note",         "TEXT"),
+    ("approval_requested_at", "TIMESTAMP"),
+    ("approval_decided_at",   "TIMESTAMP"),
+]
+
+_PRIORITY_CASE = ("CASE WHEN priority IN ('urgent', 'high') THEN 'urgent' "
+                  "ELSE 'routine' END")
 
 
 def _cols(insp, table):
@@ -93,6 +113,16 @@ def migrate():
                                  "ON units (property_id, unit_number)")
                     _say("units(property_id, unit_number) unique index -> add", True)
 
+        # ── 6. maintenance request classification ────────────────────
+        backfill = False
+        if "tickets" in tables:
+            kcols = _cols(insp, "tickets")
+            for name, ddl in TICKET_COLUMNS:
+                if name not in kcols:
+                    stmts.append(f"ALTER TABLE tickets ADD COLUMN {name} {ddl}")
+                    _say(f"tickets.{name} -> add", True)
+            backfill = "classification" not in kcols
+
         # ── apply ────────────────────────────────────────────────────
         if stmts and not DRY:
             with db.engine.begin() as conn:
@@ -101,6 +131,24 @@ def migrate():
             print(f"\n  applied {len(stmts)} statement(s)")
         elif not stmts:
             print("\n  no column changes needed")
+
+        # Existing tickets only had a priority. Map it onto both the tenant's
+        # category and the staff classification, and set the response window.
+        if backfill and not DRY:
+            with db.engine.begin() as conn:
+                n = conn.execute(text(f"""
+                    UPDATE tickets SET
+                      tenant_category = {_PRIORITY_CASE},
+                      classification  = {_PRIORITY_CASE}
+                    WHERE classification IS NULL
+                """)).rowcount
+            from models import Ticket
+            for t in Ticket.query.filter(Ticket.response_due_at.is_(None)).all():
+                t.apply_classification(t.classification or "routine")
+            db.session.commit()
+            print(f"  classified {n} existing ticket(s) from their old priority")
+        elif backfill:
+            _say("existing tickets -> classify from priority", True)
 
         # ── 5. anything new (attachments) ────────────────────────────
         if DRY:

@@ -326,7 +326,7 @@
       <div class="tw">
         <table class="ht">
           <thead>
-            <tr><th>Ref</th><th>Title</th><th>Priority</th><th>Status</th><th>Raised</th></tr>
+            <tr><th>Ref</th><th>Title</th><th>Classification</th><th>Status</th><th>Raised</th></tr>
           </thead>
           <tbody>
             {% for tk in tickets %}
@@ -334,7 +334,7 @@
               <td class="fw6 text-nv" style="font-size:12.5px;white-space:nowrap">{{ tk.ticket_number }}</td>
               <td style="font-size:13px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ tk.title }}</td>
               <td>
-                <span class="badge {{ 'b-overdue' if tk.priority=='urgent' else 'b-pending' if tk.priority=='high' else 'b-in-progress' }}" style="font-size:10.5px">{{ tk.priority }}</span>
+                <span class="badge" style="font-size:10.5px;color:{{ tk.cls.colour }};background:{{ tk.cls.tint }};border-color:{{ tk.cls.colour }}33">{{ tk.cls.short }}</span>
               </td>
               <td><span class="badge b-{{ tk.status | replace(' ','-') }}" style="font-size:10.5px">{{ tk.status }}</span></td>
               <td style="font-size:12px;color:var(--mt);white-space:nowrap">{{ tk.date_raised.strftime('%b %d, %Y') if tk.date_raised else '-' }}</td>

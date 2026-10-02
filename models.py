@@ -35,7 +35,8 @@ class User(db.Model):
     # A tenant can have one active tenancy at a time (but many over time)
     tenancies   = db.relationship("Tenancy",   back_populates="tenant",    lazy="dynamic")
     invoices    = db.relationship("Invoice",   back_populates="tenant",    lazy="dynamic")
-    tickets     = db.relationship("Ticket",    back_populates="tenant",    lazy="dynamic")
+    tickets     = db.relationship("Ticket",    back_populates="tenant",    lazy="dynamic",
+                                  foreign_keys="Ticket.tenant_id")
     transactions = db.relationship("Transaction", back_populates="tenant", lazy="dynamic")
 
     # ── Password handling ────────────────────────────────────────────
@@ -298,6 +299,69 @@ class Transaction(db.Model):
 class Ticket(db.Model):
     __tablename__ = "tickets"
 
+    # ── Classification (Maintenance Request Classification spec) ──────
+    # Tenants pick one of the first three; staff may reclassify into any of
+    # the six. `hours` is the response window counted from date_raised.
+    # `priority` is the legacy low/medium/high/urgent value that older screens
+    # and the dashboard still read; it is kept in step automatically.
+    CLASSES = {
+        "emergency": dict(
+            label="Emergency – Immediate Response Required", short="Emergency",
+            tenant_desc="For dangerous situations such as gas smells, electrical "
+                        "sparks, flooding, fire, or security failures.",
+            internal_note="Life/safety/property risk.",
+            response="Respond within 1–4 hours.", tenant_eta=None, hours=4,
+            colour="#DC2626", tint="#FEF2F2", icon="exclamation-octagon-fill",
+            tenant=True, priority="urgent"),
+        "urgent": dict(
+            label="Urgent – High Priority", short="Urgent",
+            tenant_desc="Issues that significantly affect comfort or basic living "
+                        "conditions, such as partial power outage, no water supply, "
+                        "blocked toilet (if multiple toilets exist), water heater "
+                        "issues, severe pest infestation.",
+            internal_note="Habitability issue.",
+            response="Respond within 24 hours.", tenant_eta="within 24 hours",
+            hours=24, colour="#EA580C", tint="#FFF7ED",
+            icon="exclamation-triangle-fill", tenant=True, priority="high"),
+        "routine": dict(
+            label="Routine – Standard Maintenance", short="Routine",
+            tenant_desc="For non-critical issues like minor leaks, broken lights, "
+                        "faulty switches, or cosmetic problems.",
+            internal_note="Comfort/convenience issue.",
+            response="Respond within 2–5 days.", tenant_eta="within 2–5 days",
+            hours=120, colour="#CA8A04", tint="#FEFCE8", icon="wrench",
+            tenant=True, priority="medium"),
+        "scheduled": dict(
+            label="Scheduled – Preventive Maintenance", short="Scheduled",
+            tenant_desc="",
+            internal_note="Planned tasks such as AC servicing, pest control, "
+                          "and inspections.",
+            response="Move to preventive maintenance calendar.", tenant_eta=None,
+            hours=None, colour="#2563EB", tint="#EFF6FF", icon="calendar-check",
+            tenant=False, priority="low"),
+        "tenant_responsibility": dict(
+            label="Tenant Responsibility – Chargeable", short="Chargeable",
+            tenant_desc="",
+            internal_note="Damage caused by tenant or items tenant is responsible "
+                          "for, such as lost keys, misuse, or bulbs.",
+            response="Add charge estimate and reason.", tenant_eta=None,
+            hours=None, colour="#64748B", tint="#F1F5F9", icon="brush",
+            tenant=False, priority="medium"),
+        "landlord_approval": dict(
+            label="Landlord Approval Required", short="Landlord Approval",
+            tenant_desc="",
+            internal_note="Major repairs, replacements, upgrades, or anything "
+                          "exceeding budget.",
+            response="Send approval request to landlord.", tenant_eta=None,
+            hours=None, colour="#7C3AED", tint="#F5F3FF",
+            icon="file-earmark-check", tenant=False, priority="medium"),
+    }
+    TENANT_CLASSES = [k for k, v in CLASSES.items() if v["tenant"]]
+
+    # Pre-classification tickets only had a priority; this maps them across.
+    PRIORITY_TO_CLASS = {"urgent": "urgent", "high": "urgent",
+                         "medium": "routine", "low": "routine"}
+
     id           = db.Column(db.Integer, primary_key=True)
     ticket_number = db.Column(db.String(20), unique=True, nullable=False)  # SR-001
     title        = db.Column(db.String(200), nullable=False)
@@ -309,13 +373,57 @@ class Ticket(db.Model):
     date_raised  = db.Column(db.DateTime, default=datetime.utcnow)
     date_resolved = db.Column(db.DateTime)
 
+    # What the tenant picked (never changed afterwards) and the staff view.
+    tenant_category  = db.Column(db.String(30), default="routine")
+    classification   = db.Column(db.String(30), default="routine")
+    classified_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    classified_at    = db.Column(db.DateTime, nullable=True)
+    response_due_at  = db.Column(db.DateTime, nullable=True)
+
+    # Scheduled – Preventive Maintenance
+    scheduled_for    = db.Column(db.Date, nullable=True)
+    # Tenant Responsibility – Chargeable
+    charge_estimate  = db.Column(db.Float, nullable=True)
+    charge_reason    = db.Column(db.String(300), nullable=True)
+    # Landlord Approval Required: pending | approved | rejected
+    approval_status       = db.Column(db.String(20), nullable=True)
+    approval_note         = db.Column(db.Text, nullable=True)
+    approval_requested_at = db.Column(db.DateTime, nullable=True)
+    approval_decided_at   = db.Column(db.DateTime, nullable=True)
+
     tenant_id    = db.Column(db.Integer, db.ForeignKey("users.id"),       nullable=False)
     property_id  = db.Column(db.Integer, db.ForeignKey("properties.id"),  nullable=False)
     unit_id      = db.Column(db.Integer, db.ForeignKey("units.id"),       nullable=True)
 
-    tenant       = db.relationship("User",     back_populates="tickets")
+    tenant       = db.relationship("User",     back_populates="tickets", foreign_keys=[tenant_id])
     prop         = db.relationship("Property", back_populates="tickets")
     unit         = db.relationship("Unit",     back_populates="tickets")
+    classified_by = db.relationship("User", foreign_keys=[classified_by_id])
+
+    @property
+    def cls(self):
+        """Display metadata for the internal classification."""
+        return self.CLASSES.get(self.classification) or self.CLASSES["routine"]
+
+    @property
+    def tenant_cls(self):
+        """Display metadata for what the tenant originally selected."""
+        return self.CLASSES.get(self.tenant_category) or self.CLASSES["routine"]
+
+    @property
+    def is_response_overdue(self):
+        return (self.status == "open" and self.response_due_at is not None
+                and self.response_due_at < datetime.utcnow())
+
+    def apply_classification(self, key):
+        """Set the classification and everything derived from it."""
+        from datetime import timedelta
+        meta = self.CLASSES[key]
+        self.classification = key
+        self.priority = meta["priority"]
+        raised = self.date_raised or datetime.utcnow()
+        self.response_due_at = (raised + timedelta(hours=meta["hours"])
+                                if meta["hours"] else None)
 
     def __repr__(self):
         return f"<Ticket {self.ticket_number} [{self.status}]>"

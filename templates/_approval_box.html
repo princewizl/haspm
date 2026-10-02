@@ -1,0 +1,35 @@
+{# Landlord Approval Required: status, and approve/decline for the landlord.
+   Expects `t` (the ticket) and `landlord_can_decide` in the including scope. #}
+<div style="font-size:12.5px;line-height:1.55">
+  {% if t.approval_status == 'pending' %}
+    <div><i class="bi bi-hourglass-split" style="color:#7C3AED"></i>
+      <strong>Awaiting landlord approval</strong>
+      {% if t.prop and t.prop.landlord %}from {{ t.prop.landlord.name }}{% endif %}
+      {% if t.approval_requested_at %}&middot; sent {{ t.approval_requested_at.strftime('%b %d, %Y') }}{% endif %}</div>
+  {% elif t.approval_status == 'approved' %}
+    <div style="color:var(--gr)"><i class="bi bi-check-circle-fill"></i>
+      <strong>Approved by landlord</strong>
+      {% if t.approval_decided_at %}&middot; {{ t.approval_decided_at.strftime('%b %d, %Y') }}{% endif %}</div>
+  {% elif t.approval_status == 'rejected' %}
+    <div style="color:var(--cr)"><i class="bi bi-x-circle-fill"></i>
+      <strong>Declined by landlord</strong>
+      {% if t.approval_decided_at %}&middot; {{ t.approval_decided_at.strftime('%b %d, %Y') }}{% endif %}</div>
+  {% endif %}
+  {% if t.approval_note %}
+    <div style="margin-top:6px;white-space:pre-line;color:var(--tx)">{{ t.approval_note }}</div>
+  {% endif %}
+
+  {% if landlord_can_decide %}
+  <form method="POST" action="{{ url_for('decide_approval', ticket_id=t.id) }}" style="margin-top:12px">
+    <textarea class="form-ctrl" name="note" rows="2" placeholder="Comment (optional)" style="margin-bottom:8px"></textarea>
+    <div class="df g8">
+      <button type="submit" name="decision" value="rejected" class="btn-ghost sm" style="flex:1;justify-content:center;color:var(--cr)">
+        <i class="bi bi-x-lg"></i> Decline
+      </button>
+      <button type="submit" name="decision" value="approved" class="btn-nv sm" style="flex:1;justify-content:center">
+        <i class="bi bi-check-lg"></i> Approve
+      </button>
+    </div>
+  </form>
+  {% endif %}
+</div>

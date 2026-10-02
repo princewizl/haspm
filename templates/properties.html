@@ -83,6 +83,16 @@
   }
   .prop-img-placeholder i { font-size: 36px; opacity: .45; }
 
+  /* Existing photos in the edit modal */
+  .edit-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 6px; }
+  .edit-photo { position: relative; display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; }
+  .edit-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .edit-photo input { position: absolute; top: 6px; left: 6px; width: 16px; height: 16px; accent-color: var(--cr); }
+  .edit-photo-x { position: absolute; inset: auto 0 0 0; background: rgba(201,24,74,.9); color: #fff; font-size: 11px; font-weight: 600; text-align: center; padding: 3px 0; display: none; }
+  .edit-photo:has(input:checked) { border-color: var(--cr); }
+  .edit-photo:has(input:checked) img { opacity: .4; }
+  .edit-photo:has(input:checked) .edit-photo-x { display: block; }
+
   /* Badges floating on the image */
   .prop-badge-type {
     position: absolute;
@@ -403,8 +413,9 @@
         <button class="btn-ghost sm" onclick="openModal('editPropModal{{ p.id }}')">
           <i class="bi bi-pencil"></i>
         </button>
-        {% if role == 'Admin' %}
-        <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirm('Delete {{ p.name }}?')">
+        {% if role == 'Admin' and has_perm('manage_properties') %}
+        <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirmDeleteProperty(this)"
+              data-name="{{ p.name }}" data-impact="{{ delete_impact.get(p.id, '') }}">
           <button type="submit" class="btn-ghost sm" style="color:var(--cr)">
             <i class="bi bi-trash"></i>
           </button>
@@ -457,8 +468,9 @@
             <button class="btn-ghost sm" onclick="openModal('editPropModal{{ p.id }}')" title="Edit Details">
               <i class="bi bi-pencil"></i>
             </button>
-            {% if role == 'Admin' %}
-            <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirm('Delete {{ p.name }}?')">
+            {% if role == 'Admin' and has_perm('manage_properties') %}
+            <form method="POST" action="{{ url_for('delete_property', prop_id=p.id) }}" onsubmit="return confirmDeleteProperty(this)"
+                  data-name="{{ p.name }}" data-impact="{{ delete_impact.get(p.id, '') }}">
               <button type="submit" class="btn-ghost sm" style="color:var(--cr)" title="Delete">
                 <i class="bi bi-trash"></i>
               </button>
@@ -518,7 +530,34 @@
       </div>
       <div class="modal-body" style="max-height:80vh;overflow-y:auto">
         <form method="POST" action="{{ url_for('edit_property', prop_id=p.id) }}" enctype="multipart/form-data">
-          
+
+          <div class="fg" style="margin-bottom:18px">
+            <label class="form-label">Property Photos</label>
+            {% if p.images %}
+            <div class="edit-photo-grid">
+              {% for img in p.images %}
+              <label class="edit-photo" title="Tick to remove this photo">
+                <img src="{{ img.image_url }}" alt="Photo {{ loop.index }}" loading="lazy"/>
+                <input type="checkbox" name="remove_images" value="{{ img.id }}"/>
+                <span class="edit-photo-x"><i class="bi bi-trash"></i> Remove</span>
+              </label>
+              {% endfor %}
+            </div>
+            <div class="fld-hint" style="margin-bottom:10px">Tick a photo to remove it when you save.</div>
+            {% endif %}
+            <div class="img-upload-area">
+              <input type="file" name="images" accept="image/*" multiple
+                     onchange="previewImg(this, 'editPreview{{ p.id }}')"/>
+              <i class="bi bi-images" style="font-size:24px;color:var(--mt);display:block;margin-bottom:6px"></i>
+              <div style="font-size:13px;color:var(--mt)">Add photos &mdash; drag &amp; drop or <span style="color:var(--cr);font-weight:600">browse</span></div>
+            </div>
+            <div id="editPreview{{ p.id }}" class="df g8" style="margin-top:10px; overflow-x:auto;"></div>
+            <div style="margin-top:10px">
+              <label class="form-label" style="font-size:11px">Or paste image URLs (comma separated)</label>
+              <input class="form-ctrl" name="image_urls" placeholder="https://url1, https://url2..." style="font-size:13px"/>
+            </div>
+          </div>
+
           <div class="fg">
             <label class="form-label">Property Name</label>
             <input class="form-ctrl" name="name" value="{{ p.name }}" required/>
@@ -743,10 +782,19 @@ document.addEventListener("DOMContentLoaded", () => {
   setView(savedView);
 });
 
+function confirmDeleteProperty(form) {
+  let msg = 'Delete ' + form.dataset.name + '?';
+  if (form.dataset.impact) {
+    msg += '\n\nThis also permanently deletes: ' + form.dataset.impact +
+           '.\nTenant accounts are kept. This cannot be undone.';
+  }
+  return confirm(msg);
+}
+
 /* Multi-Image file preview */
-function previewImg(input) {
-  const container = document.getElementById('imgPreviewContainer');
-  const area      = document.getElementById('uploadArea');
+function previewImg(input, containerId) {
+  const container = document.getElementById(containerId || 'imgPreviewContainer');
+  const area      = input.closest('.img-upload-area');
   container.innerHTML = '';
 
   if (input.files && input.files.length > 0) {

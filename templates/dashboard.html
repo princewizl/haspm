@@ -235,7 +235,7 @@
     <div class="sic" style="background:rgba(245,158,11,.1)"><i class="bi bi-receipt" style="font-size:22px;color:var(--wn)"></i></div>
   </div>
   <div class="stat-card">
-    <div><div class="sl">Open Tickets</div><div class="sv counter" data-target="{{ open_tickets }}">0</div><div class="ss text-rd">{{ urgent_count }} urgent</div></div>
+    <div><div class="sl">Open Tickets</div><div class="sv counter" data-target="{{ open_tickets }}">0</div><div class="ss text-rd">{{ urgent_count }} emergency/urgent</div></div>
     <div class="sic" style="background:rgba(239,68,68,.1)"><i class="bi bi-tools" style="font-size:22px;color:var(--rd)"></i></div>
   </div>
 </div>
@@ -306,14 +306,14 @@
       {% for t in tickets if t.status != 'resolved' %}
       {% if loop.index <= 4 %}
       <div class="feed-item" style="padding:10px 18px">
-        <div class="feed-dot" style="width:28px;height:28px;border-radius:50%;background:{% if t.priority=='urgent' %}rgba(201,24,74,.12){% elif t.priority=='high' %}rgba(245,158,11,.12){% else %}rgba(13,58,107,.1){% endif %};display:flex;align-items:center;justify-content:center">
-          <i class="bi bi-exclamation-circle" style="font-size:13px;color:{% if t.priority=='urgent' %}var(--cr){% elif t.priority=='high' %}var(--wn){% else %}var(--nv){% endif %}"></i>
+        <div class="feed-dot" style="width:28px;height:28px;border-radius:50%;background:{{ t.cls.tint }};display:flex;align-items:center;justify-content:center">
+          <i class="bi bi-{{ t.cls.icon }}" style="font-size:13px;color:{{ t.cls.colour }}"></i>
         </div>
         <div style="flex:1;min-width:0">
           <div class="fw6" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.title }}</div>
-          <div style="font-size:11px;color:var(--mt)">{{ t.property }}</div>
+          <div style="font-size:11px;color:var(--mt)">{{ t.prop.name if t.prop else '' }}</div>
         </div>
-        <span class="badge b-{{ t.priority }}" style="font-size:10px;margin-left:6px">{{ t.priority }}</span>
+        <span class="badge" style="font-size:10px;margin-left:6px;color:{{ t.cls.colour }};background:{{ t.cls.tint }};border-color:{{ t.cls.colour }}33">{{ t.cls.short }}</span>
       </div>
       {% endif %}
       {% endfor %}
