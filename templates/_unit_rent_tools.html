@@ -1,0 +1,7 @@
+{# Shared by the add and edit property forms: fill every unit's rent at once,
+   and the live average that will be saved as the property's average rent. #}
+<div class="unit-rent-tools">
+  <input class="form-ctrl unit-rent-fill" type="number" min="0" step="any" placeholder="Same rent for every unit"/>
+  <button type="button" class="btn-ghost sm" onclick="applyRentToAll(this)">Apply to all</button>
+</div>
+<div class="unit-rent-avg">Average rent (calculated): <strong>—</strong></div>

@@ -118,6 +118,17 @@ class Property(db.Model):
             return 0
         return round((self.occupied_units / self.total_units) * 100)
 
+    def recalc_avg_rent(self):
+        """Average rent is derived, never typed: the mean of the units' rents.
+
+        Call after adding units or changing a unit's rent. A property with no
+        units keeps whatever it had, so it still shows an indicative figure.
+        """
+        rents = [u.rent_amount or 0 for u in self.units]
+        if rents:
+            self.avg_rent = round(sum(rents) / len(rents), 2)
+        return self.avg_rent
+
     @property
     def letter(self):
         return self.name[0].upper() if self.name else "?"

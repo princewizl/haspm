@@ -398,8 +398,13 @@ def add_property():
     address     = request.form.get("address", "").strip()
     prop_type   = request.form.get("type", "Residential")
     description = request.form.get("description", "").strip()
-    num_units   = int(request.form.get("units", 0) or 0)
-    unit_rent   = float(request.form.get("unit_rent", 0) or 0)
+    # One rent per unit; the property's average is computed from them.
+    try:
+        unit_rents = [max(0.0, float(r)) for r in request.form.getlist("unit_rents")]
+    except ValueError:
+        flash("Each unit's rent must be a number.", "danger")
+        return redirect(url_for("properties"))
+    num_units   = len(unit_rents)
     pattern     = request.form.get("unit_naming_pattern", "").strip() or None
 
     # Blank means "inherit the global default from Settings".
@@ -413,7 +418,7 @@ def add_property():
 
     prop = Property(
         name=name, address=address, type=prop_type,
-        description=description, avg_rent=unit_rent,
+        description=description, avg_rent=0,
         landlord_id=session["user_id"],
         commission_pct=commission,
         unit_naming_pattern=pattern,
@@ -439,11 +444,13 @@ def add_property():
 
     # Auto-generate units using the property's naming pattern, e.g.
     # "Block A - Unit {n}" -> "Block A - Unit 1", "Block A - Unit 2", ...
-    for i in range(1, num_units + 1):
+    for i, rent in enumerate(unit_rents, start=1):
         db.session.add(Unit(
-            unit_number=prop.format_unit_name(i), rent_amount=unit_rent,
+            unit_number=prop.format_unit_name(i), rent_amount=rent,
             is_occupied=False, property_id=prop.id,
         ))
+    db.session.flush()
+    prop.recalc_avg_rent()
 
     try:
         db.session.commit()
@@ -472,7 +479,16 @@ def edit_property(prop_id):
     prop.address     = (request.form.get("address", prop.address) or "").strip()
     prop.type        = request.form.get("type", prop.type)
     prop.description = (request.form.get("description", prop.description) or "").strip()
-    prop.avg_rent    = float(request.form.get("avg_rent", prop.avg_rent) or prop.avg_rent)
+
+    # Rents of existing units, posted as unit_rent_<unit id>.
+    for unit in prop.units:
+        raw = request.form.get(f"unit_rent_{unit.id}")
+        if raw is not None and raw.strip() != "":
+            try:
+                unit.rent_amount = max(0.0, float(raw))
+            except ValueError:
+                flash(f"Rent for {unit.unit_number} must be a number - left unchanged.",
+                      "danger")
 
     if "unit_naming_pattern" in request.form:
         prop.unit_naming_pattern = request.form.get("unit_naming_pattern", "").strip() or None
@@ -499,10 +515,15 @@ def edit_property(prop_id):
             wanted = prop.total_units
         current = prop.total_units
         if wanted > current:
-            for _ in range(wanted - current):
+            new_rents = request.form.getlist("new_unit_rents")
+            for i in range(wanted - current):
+                try:
+                    rent = max(0.0, float(new_rents[i]))
+                except (IndexError, ValueError):
+                    rent = prop.avg_rent or 0
                 db.session.add(Unit(
                     unit_number=prop.next_unit_name(),
-                    rent_amount=prop.avg_rent, is_occupied=False,
+                    rent_amount=rent, is_occupied=False,
                     property_id=prop.id,
                 ))
                 db.session.flush()
@@ -511,6 +532,9 @@ def edit_property(prop_id):
             flash(f"'{prop.name}' still has {current} units. Units are not removed "
                   "automatically because they carry tenancy and invoice history.",
                   "info")
+
+    db.session.flush()
+    prop.recalc_avg_rent()
 
     # Photos: tick existing ones to remove, upload or paste URLs to add more.
     remove_ids = {int(i) for i in request.form.getlist("remove_images") if i.isdigit()}

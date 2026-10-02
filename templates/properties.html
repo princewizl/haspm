@@ -83,6 +83,18 @@
   }
   .prop-img-placeholder i { font-size: 36px; opacity: .45; }
 
+  /* Per-unit rents */
+  .unit-rent-list { max-height: 240px; overflow-y: auto; }
+  .unit-rent-list:empty, .unit-rent-list:has(> .new-unit-rows:only-child:empty) { display: none; }
+  .unit-rent-row { display: grid; grid-template-columns: 1fr 160px; gap: 10px; align-items: center; margin-bottom: 6px; }
+  .unit-rent-row .form-ctrl { padding-top: 7px; padding-bottom: 7px; }
+  .unit-rent-name { font-size: 13px; font-weight: 600; color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .unit-rent-tag { font-size: 10px; font-weight: 600; color: var(--gr); background: rgba(16,185,129,.1); padding: 1px 6px; border-radius: 10px; margin-left: 4px; }
+  .unit-rent-tools { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .unit-rent-tools .form-ctrl { flex: 1; min-width: 120px; }
+  .unit-rent-avg { font-size: 13px; color: var(--mt); margin-top: 8px; }
+  .unit-rent-avg strong { color: var(--nv); }
+
   /* Existing photos in the edit modal */
   .edit-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 6px; }
   .edit-photo { position: relative; display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden; cursor: pointer; border: 2px solid transparent; }
@@ -581,12 +593,23 @@
             </div>
             <div class="fg">
               <label class="form-label">Number of Units</label>
-              <input class="form-ctrl" type="number" name="units" value="{{ p.total_units }}" min="0"/>
+              <input class="form-ctrl" type="number" name="units" value="{{ p.total_units }}"
+                     min="{{ p.total_units }}" oninput="renderUnitRents(this.form)"/>
             </div>
           </div>
-          <div class="fg">
-            <label class="form-label">Average / Unit Rent (₦ per year)</label>
-            <input class="form-ctrl" type="number" name="avg_rent" value="{{ p.avg_rent }}" min="0"/>
+          <div class="fg unit-rents" data-existing="{{ p.total_units }}" data-start="{{ p.total_units + 1 }}" data-field="new_unit_rents">
+            <label class="form-label">Rent per Unit (₦ per year)</label>
+            <div class="unit-rent-list">
+              {% for u in p.units %}
+              <div class="unit-rent-row">
+                <span class="unit-rent-name">{{ u.unit_number }}{% if u.is_occupied %} <span class="unit-rent-tag">occupied</span>{% endif %}</span>
+                <input class="form-ctrl" type="number" name="unit_rent_{{ u.id }}" value="{{ '%g'|format(u.rent_amount or 0) }}"
+                       min="0" step="any" required oninput="updateAvgRent(this.form)"/>
+              </div>
+              {% endfor %}
+              <div class="new-unit-rows"></div>
+            </div>
+            {% include "_unit_rent_tools.html" %}
           </div>
 
           <div class="g2">
@@ -698,18 +721,24 @@
           </div>
           <div class="fg">
             <label class="form-label">Number of Units</label>
-            <input class="form-ctrl" type="number" name="units" placeholder="0" min="0"/>
+            <input class="form-ctrl" type="number" name="units" placeholder="0" min="0" max="500"
+                   oninput="renderUnitRents(this.form)"/>
           </div>
         </div>
-        <div class="fg">
-          <label class="form-label">Average / Unit Rent (₦ per year)</label>
-          <input class="form-ctrl" type="number" name="unit_rent" placeholder="e.g. 3500000" min="0"/>
+        <div class="fg unit-rents" data-existing="0" data-start="1" data-field="unit_rents">
+          <label class="form-label">Rent per Unit (₦ per year)</label>
+          <div class="unit-rent-list">
+            <div class="new-unit-rows"></div>
+          </div>
+          <div class="fld-hint unit-rent-empty">Enter the number of units to set each unit's rent.</div>
+          {% include "_unit_rent_tools.html" %}
         </div>
 
         <div class="g2">
           <div class="fg">
             <label class="form-label">Unit Naming Pattern</label>
-            <input class="form-ctrl" name="unit_naming_pattern" placeholder="Unit {n}"/>
+            <input class="form-ctrl" name="unit_naming_pattern" placeholder="Unit {n}"
+                   oninput="renderUnitRents(this.form)"/>
             <div class="fld-hint">
               <code>{n}</code> is the unit number &mdash; e.g.
               <code>Block A - Unit {n}</code> gives &ldquo;Block A - Unit 1&rdquo;,
@@ -780,6 +809,69 @@ function setView(mode) {
 document.addEventListener("DOMContentLoaded", () => {
   const savedView = localStorage.getItem('property_view_pref') || 'grid';
   setView(savedView);
+});
+
+/* ─── Per-unit rents: one row per unit, average computed live ─── */
+function unitName(form, n) {
+  const field = form.querySelector('[name=unit_naming_pattern]');
+  const pat = ((field && field.value) || '').trim()
+              || (field && field.placeholder) || 'Unit {n}';
+  return (pat.includes('{n}') ? pat : pat + ' {n}').split('{n}').join(n).trim();
+}
+
+function renderUnitRents(form) {
+  const box      = form.querySelector('.unit-rents');
+  const rows     = box.querySelector('.new-unit-rows');
+  const existing = parseInt(box.dataset.existing, 10) || 0;
+  const start    = parseInt(box.dataset.start, 10) || 1;
+  const wanted   = Math.min(500, Math.max(existing, parseInt(form.querySelector('[name=units]').value, 10) || 0));
+  const fieldName = box.dataset.field;
+  const isNew    = fieldName === 'unit_rents';     // add form vs edit form
+  const need     = wanted - existing;
+
+  // Keep rents already typed when the count changes.
+  const kept = Array.from(rows.querySelectorAll('input')).map(i => i.value);
+  rows.innerHTML = '';
+  for (let i = 0; i < need; i++) {
+    const row = document.createElement('div');
+    row.className = 'unit-rent-row';
+    const name = document.createElement('span');
+    name.className = 'unit-rent-name';
+    // In the edit form new units take the next free numbers; this is a preview.
+    name.textContent = unitName(form, start + i) + (isNew ? '' : ' (new)');
+    const input = document.createElement('input');
+    input.className = 'form-ctrl'; input.type = 'number'; input.name = fieldName;
+    input.min = '0'; input.step = 'any'; input.required = true; input.placeholder = 'Rent';
+    input.value = kept[i] !== undefined ? kept[i] : '';
+    input.addEventListener('input', () => updateAvgRent(form));
+    row.append(name, input);
+    rows.appendChild(row);
+  }
+  const empty = box.querySelector('.unit-rent-empty');
+  if (empty) empty.style.display = wanted ? 'none' : '';
+  box.querySelector('.unit-rent-tools').style.display = wanted ? '' : 'none';
+  updateAvgRent(form);
+}
+
+function applyRentToAll(btn) {
+  const form = btn.form;
+  const val  = form.querySelector('.unit-rent-fill').value;
+  if (val === '') return;
+  form.querySelectorAll('.unit-rent-list input').forEach(i => { i.value = val; });
+  updateAvgRent(form);
+}
+
+function updateAvgRent(form) {
+  const inputs = Array.from(form.querySelectorAll('.unit-rent-list input'));
+  const out    = form.querySelector('.unit-rent-avg strong');
+  if (!out) return;
+  if (!inputs.length) { out.textContent = '—'; return; }
+  const total = inputs.reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+  out.textContent = '₦' + Math.round(total / inputs.length).toLocaleString();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.unit-rents').forEach(b => renderUnitRents(b.closest('form')));
 });
 
 function confirmDeleteProperty(form) {

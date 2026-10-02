@@ -14,6 +14,7 @@ What it does:
   5. attachments table
   6. tickets: maintenance classification columns, existing tickets mapped
      from their old priority (urgent/high -> Urgent, otherwise Routine)
+  7. properties.avg_rent recalculated as the mean of the units' rents
 
 Run deploy/backup.sh first on anything with real data in it.
 """
@@ -149,6 +150,25 @@ def migrate():
             print(f"  classified {n} existing ticket(s) from their old priority")
         elif backfill:
             _say("existing tickets -> classify from priority", True)
+
+        # ── 7. average rent is now derived from the units' rents ─────
+        # Only where some unit has a rent; properties whose units were all
+        # created at 0 keep the figure that was typed in by hand.
+        if "properties" in tables and "units" in tables:
+            from models import Property
+            changed = []
+            for p in Property.query.all():
+                rents = [u.rent_amount or 0 for u in p.units]
+                if rents and any(rents):
+                    avg = round(sum(rents) / len(rents), 2)
+                    if abs((p.avg_rent or 0) - avg) > 0.005:
+                        changed.append((p, avg))
+            for p, avg in changed:
+                _say(f"properties[{p.id}] {p.name}: avg_rent {p.avg_rent or 0:,.0f} -> {avg:,.0f}", True)
+                if not DRY:
+                    p.avg_rent = avg
+            if changed and not DRY:
+                db.session.commit()
 
         # ── 5. anything new (attachments) ────────────────────────────
         if DRY:
