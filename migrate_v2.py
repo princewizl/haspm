@@ -15,6 +15,8 @@ What it does:
   6. tickets: maintenance classification columns, existing tickets mapped
      from their old priority (urgent/high -> Urgent, otherwise Routine)
   7. properties.avg_rent recalculated as the mean of the units' rents
+  8. units.unit_number widened to 60 characters (Postgres only; SQLite
+     does not enforce lengths)
 
 Run deploy/backup.sh first on anything with real data in it.
 """
@@ -113,6 +115,12 @@ def migrate():
                     stmts.append("CREATE UNIQUE INDEX uq_unit_per_property "
                                  "ON units (property_id, unit_number)")
                     _say("units(property_id, unit_number) unique index -> add", True)
+
+        # ── 8. unit names up to 60 characters ────────────────────────
+        # SQLite ignores VARCHAR lengths; only a real server database needs it.
+        if "units" in tables and db.engine.dialect.name == "postgresql":
+            stmts.append("ALTER TABLE units ALTER COLUMN unit_number TYPE VARCHAR(60)")
+            _say("units.unit_number -> VARCHAR(60)", True)
 
         # ── 6. maintenance request classification ────────────────────
         backfill = False

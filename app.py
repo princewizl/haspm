@@ -386,6 +386,20 @@ def properties():
     )
 
 
+UNIT_NAME_MAX = 60
+
+
+def _duplicate_unit_names(names):
+    """Names used more than once (case-insensitive), in first-seen order."""
+    seen, dupes = set(), []
+    for n in names:
+        key = n.casefold()
+        if key in seen and n not in dupes:
+            dupes.append(n)
+        seen.add(key)
+    return dupes
+
+
 @app.route("/properties/add", methods=["POST"])
 @role_required("Admin", "Landlord")
 def add_property():
@@ -442,11 +456,20 @@ def add_property():
             if url.strip():
                 db.session.add(PropertyImage(property_id=prop.id, image_url=url.strip()))
 
-    # Auto-generate units using the property's naming pattern, e.g.
-    # "Block A - Unit {n}" -> "Block A - Unit 1", "Block A - Unit 2", ...
-    for i, rent in enumerate(unit_rents, start=1):
+    # Unit names are typed per unit. The form pre-fills them from the naming
+    # pattern ("Block A - Unit {n}"), and a blank one falls back to it.
+    names = request.form.getlist("unit_names")
+    unit_names = [((names[i] if i < len(names) else "").strip()[:UNIT_NAME_MAX]
+                   or prop.format_unit_name(i + 1)) for i in range(num_units)]
+    dupes = _duplicate_unit_names(unit_names)
+    if dupes:
+        db.session.rollback()
+        flash("Each unit needs its own name - used more than once: "
+              + ", ".join(dupes) + ". Nothing was saved.", "danger")
+        return redirect(url_for("properties"))
+    for unit_name, rent in zip(unit_names, unit_rents):
         db.session.add(Unit(
-            unit_number=prop.format_unit_name(i), rent_amount=rent,
+            unit_number=unit_name, rent_amount=rent,
             is_occupied=False, property_id=prop.id,
         ))
     db.session.flush()
@@ -456,8 +479,8 @@ def add_property():
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        flash("Could not create the property: that unit naming pattern produced "
-              "duplicate unit names.", "danger")
+        flash("Could not create the property: two units would have the same name.",
+              "danger")
         return redirect(url_for("properties"))
 
     flash(f"Property '{name}' added successfully with {num_units} unit(s)!", "success")
@@ -475,6 +498,39 @@ def edit_property(prop_id):
     if session.get("role") == "Landlord" and prop.landlord_id != session["user_id"]:
         flash("Access denied. You can only edit your own properties.", "danger")
         return redirect(url_for("properties"))
+    # Unit names: existing ones may be renamed (unit_name_<id>), new ones are
+    # posted as new_unit_names. Check the final set is unique before changing
+    # anything, so a clash never leaves the property half-saved.
+    existing_units = list(prop.units)
+    renames = {}
+    for unit in existing_units:
+        raw = (request.form.get(f"unit_name_{unit.id}") or "").strip()[:UNIT_NAME_MAX]
+        if raw and raw != unit.unit_number:
+            renames[unit] = raw
+    try:
+        wanted_units = int(request.form.get("units") or len(existing_units))
+    except ValueError:
+        wanted_units = len(existing_units)
+    new_count = max(0, wanted_units - len(existing_units))
+    posted_new = [n.strip()[:UNIT_NAME_MAX] for n in request.form.getlist("new_unit_names")]
+    final_existing = [renames.get(u, u.unit_number) for u in existing_units]
+    new_names = []
+    for i in range(new_count):
+        name_i = posted_new[i] if i < len(posted_new) else ""
+        if not name_i:
+            # Next pattern name not already taken by this property.
+            n = 1
+            while prop.format_unit_name(n).casefold() in {
+                    x.casefold() for x in final_existing + new_names}:
+                n += 1
+            name_i = prop.format_unit_name(n)
+        new_names.append(name_i)
+    dupes = _duplicate_unit_names(final_existing + new_names)
+    if dupes:
+        flash("Each unit needs its own name - used more than once: "
+              + ", ".join(dupes) + ". Nothing was saved.", "danger")
+        return redirect(url_for("properties"))
+
     prop.name        = (request.form.get("name") or prop.name).strip()
     prop.address     = (request.form.get("address", prop.address) or "").strip()
     prop.type        = request.form.get("type", prop.type)
@@ -506,32 +562,30 @@ def edit_property(prop_id):
                 flash("Commission must be a number between 0 and 100 - left unchanged.",
                       "danger")
 
-    # Growing the unit count adds units named from the pattern. Shrinking it is
-    # not done here: units carry tenancy and invoice history.
-    if request.form.get("units"):
-        try:
-            wanted = int(request.form["units"])
-        except ValueError:
-            wanted = prop.total_units
-        current = prop.total_units
-        if wanted > current:
-            new_rents = request.form.getlist("new_unit_rents")
-            for i in range(wanted - current):
-                try:
-                    rent = max(0.0, float(new_rents[i]))
-                except (IndexError, ValueError):
-                    rent = prop.avg_rent or 0
-                db.session.add(Unit(
-                    unit_number=prop.next_unit_name(),
-                    rent_amount=rent, is_occupied=False,
-                    property_id=prop.id,
-                ))
-                db.session.flush()
-            flash(f"Added {wanted - current} unit(s) to '{prop.name}'.", "info")
-        elif wanted < current:
-            flash(f"'{prop.name}' still has {current} units. Units are not removed "
-                  "automatically because they carry tenancy and invoice history.",
-                  "info")
+    # Renames go through a temporary name first, so swapping two units' names
+    # never trips the per-property unique index halfway through.
+    if renames:
+        for unit in renames:
+            unit.unit_number = f"__renaming_{unit.id}"
+        db.session.flush()
+        for unit, new_name in renames.items():
+            unit.unit_number = new_name
+
+    # Growing the unit count adds units. Shrinking it is not done here: units
+    # carry tenancy and invoice history.
+    if new_count:
+        new_rents = request.form.getlist("new_unit_rents")
+        for i, unit_name in enumerate(new_names):
+            try:
+                rent = max(0.0, float(new_rents[i]))
+            except (IndexError, ValueError):
+                rent = prop.avg_rent or 0
+            db.session.add(Unit(unit_number=unit_name, rent_amount=rent,
+                                is_occupied=False, property_id=prop.id))
+        flash(f"Added {new_count} unit(s) to '{prop.name}'.", "info")
+    elif wanted_units < len(existing_units):
+        flash(f"'{prop.name}' still has {len(existing_units)} units. Units are not removed "
+              "automatically because they carry tenancy and invoice history.", "info")
 
     db.session.flush()
     prop.recalc_avg_rent()
@@ -718,6 +772,8 @@ def tenants():
             "is_active": u.is_active,
 
             "property_id": active.unit.property_id if active else None,
+            # Properties this landlord manages, pre-ticked in the edit form.
+            "managed_property_ids": [p.id for p in u.properties] if u.role == "Landlord" else [],
             "unit_id": active.unit.id if active else None,
 
             "property_name": active.unit.prop.name if active else "—",
@@ -807,6 +863,7 @@ def add_tenant():
 @dept_required("manage_staff", "edit_contacts")
 def edit_tenant(user_id):
     user = User.query.get_or_404(user_id)
+    original_role = user.role
 
     # Customer Service may edit tenant/landlord contact details only.
     # Staff accounts, role changes, passwords, departments and tenancy/rent
@@ -818,6 +875,7 @@ def edit_tenant(user_id):
 
     first_name = request.form.get("first_name", "").strip()
     last_name  = request.form.get("last_name", "").strip()
+    full_name  = request.form.get("name", "").strip()
     email      = request.form.get("email", "").strip().lower()
     phone      = request.form.get("phone", "").strip()
     role       = request.form.get("role", user.role) if is_management else user.role
@@ -846,7 +904,9 @@ def edit_tenant(user_id):
         return redirect(url_for("tenants"))
 
     # Update account details
-    if first_name or last_name:
+    if full_name:
+        user.name = full_name
+    elif first_name or last_name:
         user.name = f"{first_name} {last_name}".strip()
     if email:
         user.email = email
@@ -865,6 +925,25 @@ def edit_tenant(user_id):
         db.session.commit()
         flash(f"Contact details for {user.name} updated successfully!", "success")
         return redirect(url_for("tenants"))
+
+    # Properties a landlord manages. Ticking a property owned by someone else
+    # moves it to this landlord; unticking one leaves it with no landlord.
+    was_landlord = original_role == "Landlord"
+    reassigned = []
+    if role == "Landlord" and request.form.get("landlord_props_submitted"):
+        wanted = {int(i) for i in request.form.getlist("managed_property_ids") if i.isdigit()}
+        for prop in Property.query.filter(db.or_(Property.id.in_(wanted),
+                                                 Property.landlord_id == user.id)).all():
+            if prop.id in wanted and prop.landlord_id != user.id:
+                if prop.landlord and prop.landlord.role == "Landlord":
+                    reassigned.append(f"{prop.name} (from {prop.landlord.name})")
+                prop.landlord_id = user.id
+            elif prop.id not in wanted and prop.landlord_id == user.id:
+                prop.landlord_id = None
+    elif was_landlord and role != "Landlord":
+        # No longer a landlord: release their properties instead of leaving
+        # a tenant or staff account as the owner.
+        Property.query.filter_by(landlord_id=user.id).update({"landlord_id": None})
 
     active_tenancy = Tenancy.query.filter_by(tenant_id=user.id, is_active=True).first()
 
@@ -916,6 +995,8 @@ def edit_tenant(user_id):
 
     db.session.commit()
     flash(f"User {user.name} updated successfully.", "success")
+    if reassigned:
+        flash("Moved to " + user.name + ": " + "; ".join(reassigned) + ".", "info")
     return redirect(url_for("tenants"))
 
 

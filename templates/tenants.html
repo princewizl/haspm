@@ -19,6 +19,15 @@
 
 {% block extra_head %}
 <style>
+  /* Landlord: properties managed */
+  .ll-prop-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--bd); border-radius: 10px; }
+  .ll-prop { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--bg); cursor: pointer; font-size: 13px; }
+  .ll-prop:last-child { border-bottom: none; }
+  .ll-prop:hover { background: var(--bg); }
+  .ll-prop input { width: 16px; height: 16px; accent-color: var(--cr); flex-shrink: 0; }
+  .ll-prop-name { font-weight: 600; color: var(--tx); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ll-prop-owner { font-size: 11.5px; color: var(--mt); white-space: nowrap; }
+  .ll-prop-owner.moving { color: var(--wn); font-weight: 600; }
   /* ── General CRM Layout ── */
   .topbar-actions-wrap { display: flex; align-items: center; gap: 12px; width: 100%; justify-content: flex-end; }
   .search-box { position: relative; display: flex; align-items: center; max-width: 350px; width: 100%; }
@@ -151,7 +160,7 @@
               {% if t.role == 'Tenant' %}
                 {% if t.property_name != '—' %}
                   <div class="fw6" style="font-size:13px;color:var(--nv);">{{ t.property_name }}</div>
-                  <div class="text-sub">Unit {{ t.unit_number }}</div>
+                  <div class="text-sub">{{ t.unit_number }}</div>
                 {% else %}
                   <span class="text-sub" style="font-style: italic;">Unassigned</span>
                 {% endif %}
@@ -450,6 +459,32 @@
             </div>
           </div>
         </div>
+
+        <!-- Properties a landlord manages — Management only -->
+        <div id="editLandlordSection" style="display:none">
+          <div class="modal-section">Properties Managed</div>
+          <input type="hidden" name="landlord_props_submitted" value="1"/>
+          {% if properties %}
+          <div class="ll-prop-list">
+            {% for p in properties %}
+            <label class="ll-prop">
+              <input type="checkbox" name="managed_property_ids" value="{{ p.id }}"
+                     data-owner-id="{{ p.landlord_id or '' }}"
+                     data-owner-name="{{ p.landlord.name if p.landlord and p.landlord.role == 'Landlord' else '' }}"
+                     onchange="noteLandlordMove(this)"/>
+              <span class="ll-prop-name">{{ p.name }}</span>
+              <span class="ll-prop-owner"></span>
+            </label>
+            {% endfor %}
+          </div>
+          <div class="fld-hint" style="margin-top:6px">
+            Ticking a property managed by another landlord moves it to this one.
+            Unticking leaves the property without a landlord.
+          </div>
+          {% else %}
+          <div class="fld-hint">No properties yet.</div>
+          {% endif %}
+        </div>
         {% endif %}
 
         <div class="df g8" style="margin-top:24px">
@@ -576,7 +611,7 @@ async function loadUnits(propId, targetSelectId) {
     units.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.id;
-      opt.textContent = `Unit ${u.unit_number} (₦${Number(u.rent_amount || 0).toLocaleString()})`;
+      opt.textContent = `${u.unit_number} (₦${Number(u.rent_amount || 0).toLocaleString()})`;
       sel.appendChild(opt);
     });
   } catch (err) {
@@ -602,6 +637,14 @@ async function openEditModal(buttonElement) {
   if (rentEl) rentEl.value = t.annual_rent || '';
 
   toggleTenancySection(t.role, 'edit');
+
+  // Tick the properties this landlord already manages.
+  editingUserId = String(t.id);
+  const managed = new Set((t.managed_property_ids || []).map(String));
+  document.querySelectorAll('#editLandlordSection input[name=managed_property_ids]').forEach(cb => {
+    cb.checked = managed.has(cb.value);
+    noteLandlordMove(cb);
+  });
 
   const propSel = document.getElementById('editPropertySelect');
   const unitSel = document.getElementById('editUnitSelect');
@@ -629,6 +672,21 @@ function toggleTenancySection(role, prefix) {
   if (deptSection) {
     deptSection.style.display = role === 'Admin' ? '' : 'none';
   }
+  const landlordSection = document.getElementById(prefix + 'LandlordSection');
+  if (landlordSection) {
+    landlordSection.style.display = role === 'Landlord' ? '' : 'none';
+  }
+}
+
+// ── Landlord properties: say who a property currently belongs to ───
+let editingUserId = '';
+function noteLandlordMove(cb) {
+  const owner = cb.closest('.ll-prop').querySelector('.ll-prop-owner');
+  const ownedByOther = cb.dataset.ownerId && cb.dataset.ownerId !== editingUserId && cb.dataset.ownerName;
+  owner.classList.toggle('moving', !!(ownedByOther && cb.checked));
+  owner.textContent = !ownedByOther ? ''
+    : cb.checked ? 'moves from ' + cb.dataset.ownerName
+    : cb.dataset.ownerName;
 }
 
 // ── Populate and open the Edit modal ───────────────────────────────

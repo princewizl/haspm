@@ -94,7 +94,7 @@
           <span style="font-size:12px;color:var(--mt)">
             <i class="bi bi-house-door" style="margin-right:3px"></i>
             {{ tenancy.unit.prop.name if tenancy.unit and tenancy.unit.prop else '—' }},
-            Unit {{ tenancy.unit.unit_number if tenancy.unit else '—' }}
+            {{ tenancy.unit.unit_number if tenancy.unit else '—' }}
           </span>
         {% endif %}
       </div>
@@ -210,7 +210,7 @@
         <div class="info-row" style="align-items:flex-start">
           <div>
             <div class="fw6" style="font-size:13px">{{ t.unit.prop.name if t.unit and t.unit.prop else '—' }}</div>
-            <div style="font-size:12px;color:var(--mt)">Unit {{ t.unit.unit_number if t.unit else '—' }}</div>
+            <div style="font-size:12px;color:var(--mt)">{{ t.unit.unit_number if t.unit else '—' }}</div>
           </div>
           <div style="text-align:right;font-size:12px;color:var(--mt)">
             {{ t.start_date.strftime('%b %Y') }} → {{ t.end_date.strftime('%b %Y') if t.end_date else 'ongoing' }}

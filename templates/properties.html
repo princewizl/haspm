@@ -86,7 +86,12 @@
   /* Per-unit rents */
   .unit-rent-list { max-height: 240px; overflow-y: auto; }
   .unit-rent-list:empty, .unit-rent-list:has(> .new-unit-rows:only-child:empty) { display: none; }
-  .unit-rent-row { display: grid; grid-template-columns: 1fr 160px; gap: 10px; align-items: center; margin-bottom: 6px; }
+  .unit-rent-row { display: grid; grid-template-columns: 1fr 150px; gap: 10px; align-items: center; margin-bottom: 6px; }
+  .unit-rent-head { display: grid; grid-template-columns: 1fr 150px; gap: 10px; font-size: 11px; font-weight: 600; color: var(--mt); margin-bottom: 4px; }
+  .unit-name-cell { position: relative; }
+  .unit-name-cell .unit-rent-tag { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+  .unit-name-input.dupe { border-color: var(--cr); background: #FFF5F7; }
+  .unit-name-warn { font-size: 12px; color: var(--cr); margin-top: 4px; display: none; }
   .unit-rent-row .form-ctrl { padding-top: 7px; padding-bottom: 7px; }
   .unit-rent-name { font-size: 13px; font-weight: 600; color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .unit-rent-tag { font-size: 10px; font-weight: 600; color: var(--gr); background: rgba(16,185,129,.1); padding: 1px 6px; border-radius: 10px; margin-left: 4px; }
@@ -515,7 +520,7 @@
               <div style="min-width:0">
                 <a href="{{ url_for('user_profile', user_id=t.id) }}" class="fw6"
                    style="font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--nv);text-decoration:none;display:block">{{ t.name }}</a>
-                <div style="font-size:11.5px;color:var(--mt)">Unit {{ t.unit }} · Due {{ t.due }}</div>
+                <div style="font-size:11.5px;color:var(--mt)">{{ t.unit }} · Due {{ t.due }}</div>
               </div>
             </div>
             <div style="text-align:right;flex-shrink:0;margin-left:12px">
@@ -598,17 +603,23 @@
             </div>
           </div>
           <div class="fg unit-rents" data-existing="{{ p.total_units }}" data-start="{{ p.total_units + 1 }}" data-field="new_unit_rents">
-            <label class="form-label">Rent per Unit (₦ per year)</label>
+            <label class="form-label">Units</label>
+            <div class="unit-rent-head"><span>Unit name</span><span>Rent (₦ per year)</span></div>
             <div class="unit-rent-list">
               {% for u in p.units %}
               <div class="unit-rent-row">
-                <span class="unit-rent-name">{{ u.unit_number }}{% if u.is_occupied %} <span class="unit-rent-tag">occupied</span>{% endif %}</span>
-                <input class="form-ctrl" type="number" name="unit_rent_{{ u.id }}" value="{{ '%g'|format(u.rent_amount or 0) }}"
+                <div class="unit-name-cell">
+                  <input class="form-ctrl unit-name-input" name="unit_name_{{ u.id }}" value="{{ u.unit_number }}"
+                         maxlength="60" required oninput="checkUnitNames(this.form)"/>
+                  {% if u.is_occupied %}<span class="unit-rent-tag">occupied</span>{% endif %}
+                </div>
+                <input class="form-ctrl unit-rent-input" type="number" name="unit_rent_{{ u.id }}" value="{{ '%g'|format(u.rent_amount or 0) }}"
                        min="0" step="any" required oninput="updateAvgRent(this.form)"/>
               </div>
               {% endfor %}
               <div class="new-unit-rows"></div>
             </div>
+            <div class="unit-name-warn"></div>
             {% include "_unit_rent_tools.html" %}
           </div>
 
@@ -621,7 +632,8 @@
               <div class="fld-hint">
                 <code>{n}</code> is the unit number &mdash; e.g.
                 <code>Block A - Unit {n}</code> gives &ldquo;Block A - Unit 1&rdquo;.
-                Names are unique within this property.
+                Only pre-fills names for new units &mdash; every name above can be edited.
+                Names must be unique within this property.
               </div>
             </div>
             {% if session.role == 'Admin' and has_perm('manage_properties') %}
@@ -726,11 +738,13 @@
           </div>
         </div>
         <div class="fg unit-rents" data-existing="0" data-start="1" data-field="unit_rents">
-          <label class="form-label">Rent per Unit (₦ per year)</label>
+          <label class="form-label">Units</label>
+          <div class="unit-rent-head"><span>Unit name</span><span>Rent (₦ per year)</span></div>
           <div class="unit-rent-list">
             <div class="new-unit-rows"></div>
           </div>
-          <div class="fld-hint unit-rent-empty">Enter the number of units to set each unit's rent.</div>
+          <div class="unit-name-warn"></div>
+          <div class="fld-hint unit-rent-empty">Enter the number of units to name each one and set its rent.</div>
           {% include "_unit_rent_tools.html" %}
         </div>
 
@@ -742,7 +756,8 @@
             <div class="fld-hint">
               <code>{n}</code> is the unit number &mdash; e.g.
               <code>Block A - Unit {n}</code> gives &ldquo;Block A - Unit 1&rdquo;,
-              &ldquo;Block A - Unit 2&rdquo;&hellip;
+              &ldquo;Block A - Unit 2&rdquo;&hellip; This only pre-fills the names;
+              type over any of them to give units their own names.
             </div>
           </div>
           {% if session.role == 'Admin' and has_perm('manage_properties') %}
@@ -811,7 +826,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setView(savedView);
 });
 
-/* ─── Per-unit rents: one row per unit, average computed live ─── */
+/* ─── Units: a name and a rent per unit, average computed live ─── */
 function unitName(form, n) {
   const field = form.querySelector('[name=unit_naming_pattern]');
   const pat = ((field && field.value) || '').trim()
@@ -829,40 +844,72 @@ function renderUnitRents(form) {
   const isNew    = fieldName === 'unit_rents';     // add form vs edit form
   const need     = wanted - existing;
 
-  // Keep rents already typed when the count changes.
-  const kept = Array.from(rows.querySelectorAll('input')).map(i => i.value);
+  const nameField = isNew ? 'unit_names' : 'new_unit_names';
+
+  // Keep what was already typed when the count or pattern changes. A name the
+  // user edited by hand stays; untouched ones follow the naming pattern.
+  const keptRents = Array.from(rows.querySelectorAll('.unit-rent-input')).map(i => i.value);
+  const keptNames = Array.from(rows.querySelectorAll('.unit-name-input'))
+                         .map(i => i.dataset.edited ? i.value : null);
   rows.innerHTML = '';
   for (let i = 0; i < need; i++) {
     const row = document.createElement('div');
     row.className = 'unit-rent-row';
-    const name = document.createElement('span');
-    name.className = 'unit-rent-name';
-    // In the edit form new units take the next free numbers; this is a preview.
-    name.textContent = unitName(form, start + i) + (isNew ? '' : ' (new)');
-    const input = document.createElement('input');
-    input.className = 'form-ctrl'; input.type = 'number'; input.name = fieldName;
-    input.min = '0'; input.step = 'any'; input.required = true; input.placeholder = 'Rent';
-    input.value = kept[i] !== undefined ? kept[i] : '';
-    input.addEventListener('input', () => updateAvgRent(form));
-    row.append(name, input);
+
+    const name = document.createElement('input');
+    name.className = 'form-ctrl unit-name-input'; name.name = nameField;
+    name.maxLength = 60; name.required = true; name.placeholder = 'Unit name';
+    if (keptNames[i] != null) { name.value = keptNames[i]; name.dataset.edited = '1'; }
+    else name.value = unitName(form, start + i);
+    name.addEventListener('input', () => { name.dataset.edited = '1'; checkUnitNames(form); });
+
+    const rent = document.createElement('input');
+    rent.className = 'form-ctrl unit-rent-input'; rent.type = 'number'; rent.name = fieldName;
+    rent.min = '0'; rent.step = 'any'; rent.required = true; rent.placeholder = 'Rent';
+    rent.value = keptRents[i] !== undefined ? keptRents[i] : '';
+    rent.addEventListener('input', () => updateAvgRent(form));
+
+    row.append(name, rent);
     rows.appendChild(row);
   }
   const empty = box.querySelector('.unit-rent-empty');
   if (empty) empty.style.display = wanted ? 'none' : '';
+  box.querySelector('.unit-rent-head').style.display = wanted ? '' : 'none';
   box.querySelector('.unit-rent-tools').style.display = wanted ? '' : 'none';
   updateAvgRent(form);
+  checkUnitNames(form);
+}
+
+/* Unit names must be unique within the property; block the save if not. */
+function checkUnitNames(form) {
+  const inputs = Array.from(form.querySelectorAll('.unit-name-input'));
+  const counts = {};
+  inputs.forEach(i => { const k = i.value.trim().toLowerCase(); if (k) counts[k] = (counts[k] || 0) + 1; });
+  const dupes = new Map();          // lower-case key -> name as first typed
+  inputs.forEach(i => {
+    const k = i.value.trim().toLowerCase();
+    const bad = k && counts[k] > 1;
+    i.classList.toggle('dupe', !!bad);
+    i.setCustomValidity(bad ? 'Each unit needs its own name.' : '');
+    if (bad && !dupes.has(k)) dupes.set(k, i.value.trim());
+  });
+  const warn = form.querySelector('.unit-name-warn');
+  if (warn) {
+    warn.textContent = dupes.size ? 'Used more than once: ' + Array.from(dupes.values()).join(', ') : '';
+    warn.style.display = dupes.size ? 'block' : 'none';
+  }
 }
 
 function applyRentToAll(btn) {
   const form = btn.form;
   const val  = form.querySelector('.unit-rent-fill').value;
   if (val === '') return;
-  form.querySelectorAll('.unit-rent-list input').forEach(i => { i.value = val; });
+  form.querySelectorAll('.unit-rent-input').forEach(i => { i.value = val; });
   updateAvgRent(form);
 }
 
 function updateAvgRent(form) {
-  const inputs = Array.from(form.querySelectorAll('.unit-rent-list input'));
+  const inputs = Array.from(form.querySelectorAll('.unit-rent-input'));
   const out    = form.querySelector('.unit-rent-avg strong');
   if (!out) return;
   if (!inputs.length) { out.textContent = '—'; return; }

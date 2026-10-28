@@ -95,7 +95,8 @@ class Property(db.Model):
     landlord    = db.relationship("User", back_populates="properties", foreign_keys=[landlord_id])
 
     # Relationships
-    units        = db.relationship("Unit",    back_populates="prop", cascade="all, delete-orphan", lazy="dynamic")
+    units        = db.relationship("Unit",    back_populates="prop", cascade="all, delete-orphan", lazy="dynamic",
+                                   order_by="Unit.id")
     tickets      = db.relationship("Ticket",  back_populates="prop", lazy="dynamic")
     images = db.relationship("PropertyImage", backref="property", cascade="all, delete-orphan", lazy="joined")
 
@@ -202,7 +203,7 @@ class Unit(db.Model):
     )
 
     id          = db.Column(db.Integer, primary_key=True)
-    unit_number = db.Column(db.String(20), nullable=False)   # e.g. "A1", "3B"
+    unit_number = db.Column(db.String(60), nullable=False)   # e.g. "A1", "Block A - Flat 3"
     floor       = db.Column(db.Integer, default=0)
     bedrooms    = db.Column(db.Integer, default=1)
     bathrooms   = db.Column(db.Float,   default=1)
