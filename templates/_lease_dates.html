@@ -1,0 +1,78 @@
+{# Lease dates shared by the add-user, edit-user and profile forms.
+   Leases renew yearly: lease end is normally left blank (open-ended), the
+   lease expiry is the last day of the current term, and the renewal date is
+   always the day after it. Call lease_date_script() once per page. #}
+
+{% macro lease_date_fields(prefix, start='', expiry='', end='') -%}
+<div class="lease-dates" data-prefix="{{ prefix }}">
+  <div class="fg2">
+    <div class="fg">
+      <label class="form-label">Move-in Date</label>
+      <input class="form-ctrl ld-start" type="date" name="start_date" id="{{ prefix }}StartDate"
+             value="{{ start }}" oninput="leaseDatesChanged(this, 'start')"/>
+    </div>
+    <div class="fg">
+      <label class="form-label">Lease Expiry</label>
+      <input class="form-ctrl ld-expiry" type="date" name="lease_expiry" id="{{ prefix }}LeaseExpiry"
+             value="{{ expiry }}" oninput="leaseDatesChanged(this, 'expiry')"/>
+    </div>
+  </div>
+  <div class="fg2">
+    <div class="fg">
+      <label class="form-label">Renewal Date</label>
+      <div class="form-ctrl ld-renewal" style="background:var(--bg);color:var(--mt)">—</div>
+    </div>
+    <div class="fg">
+      <label class="form-label">Lease End <span style="font-weight:400;font-size:10px">(only if moving out)</span></label>
+      <input class="form-ctrl ld-end" type="date" name="end_date" id="{{ prefix }}EndDate" value="{{ end }}"/>
+    </div>
+  </div>
+  <div class="fld-hint" style="margin-top:-6px;margin-bottom:12px">
+    Expiry defaults to one year after move-in. Rent renews yearly, so the
+    lease stays open-ended &mdash; leave Lease End blank unless the tenant is leaving.
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro lease_date_script() -%}
+<script>
+(function () {
+  function iso(d) { return d.toISOString().slice(0, 10); }
+  function parse(v) { return v ? new Date(v + 'T00:00:00Z') : null; }
+  // One year after move-in, minus a day: 1 Mar 2026 -> 28 Feb 2027.
+  function defaultExpiry(start) {
+    const d = new Date(start);
+    d.setUTCFullYear(d.getUTCFullYear() + 1);
+    if (d.getUTCDate() !== start.getUTCDate()) d.setUTCDate(0);   // 29 Feb
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d;
+  }
+  function showRenewal(box) {
+    const exp = parse(box.querySelector('.ld-expiry').value);
+    const out = box.querySelector('.ld-renewal');
+    if (!exp) { out.textContent = '—'; return; }
+    exp.setUTCDate(exp.getUTCDate() + 1);
+    out.textContent = exp.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC'});
+  }
+  window.leaseDatesChanged = function (el, which) {
+    const box = el.closest('.lease-dates');
+    const exp = box.querySelector('.ld-expiry');
+    if (which === 'expiry') exp.dataset.edited = exp.value ? '1' : '';
+    if (which === 'start' && !exp.dataset.edited) {
+      const start = parse(el.value);
+      exp.value = start ? iso(defaultExpiry(start)) : '';
+    }
+    showRenewal(box);
+  };
+  // Forms filled by script (the users list edit modal) call this afterwards.
+  window.refreshLeaseDates = function (box) {
+    const exp = box.querySelector('.ld-expiry');
+    exp.dataset.edited = exp.value ? '1' : '';
+    showRenewal(box);
+  };
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.lease-dates').forEach(window.refreshLeaseDates);
+  });
+})();
+</script>
+{%- endmacro %}

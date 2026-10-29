@@ -779,6 +779,10 @@ def tenants():
             "property_name": active.unit.prop.name if active else "—",
             "unit_number": active.unit.unit_number if active else "—",
             "annual_rent": active.annual_rent if active else 0,
+            "start_date": active.start_date.isoformat() if active and active.start_date else "",
+            "lease_expiry": active.current_expiry.isoformat() if active and active.current_expiry else "",
+            "end_date": active.end_date.isoformat() if active and active.end_date else "",
+            "renewal_date": active.renewal_date.strftime("%b %d, %Y") if active and active.renewal_date else "",
             "due_date": inv.due_date.strftime("%b %d, %Y") if inv and inv.due_date else "—",
             "invoice_status": inv.status if inv else "—",
         })
@@ -791,6 +795,49 @@ def tenants():
         role=session["role"],
         properties=properties
     )
+
+def _tenancy_dates_from_form(form, current=None):
+    """Move-in, lease expiry and lease end as typed on a tenant form.
+
+    Returns (start, expiry, end, error). A field that is absent from the form
+    keeps its current value; a blank expiry defaults to one year after move-in;
+    a blank lease end means open-ended, which is the usual yearly lease.
+    """
+    def parse(name, fallback):
+        if name not in form:
+            return fallback, None
+        raw = (form.get(name) or "").strip()
+        if not raw:
+            return None, None
+        try:
+            return date.fromisoformat(raw), None
+        except ValueError:
+            return None, f"'{raw}' is not a valid date."
+
+    start, err1 = parse("start_date", current.start_date if current else None)
+    expiry, err2 = parse("lease_expiry", current.lease_expiry if current else None)
+    end, err3 = parse("end_date", current.end_date if current else None)
+    error = err1 or err2 or err3
+    if error:
+        return None, None, None, error
+
+    start = start or (current.start_date if current else None) or date.today()
+    if not expiry or expiry < start:
+        if expiry and expiry < start:
+            return None, None, None, "Lease expiry cannot be before the move-in date."
+        expiry = Tenancy.default_expiry(start)
+    if end and end < start:
+        return None, None, None, "Lease end cannot be before the move-in date."
+    return start, expiry, end, None
+
+
+def _safe_next(default_endpoint):
+    """Where to go after a user form: back to the page it came from."""
+    nxt = request.form.get("next", "")
+    if nxt.startswith("/") and not nxt.startswith("//"):
+        return nxt
+    return url_for(default_endpoint)
+
 
 @app.route("/tenants/add", methods=["POST"])
 @dept_required("manage_staff", "onboard_users")
@@ -842,6 +889,11 @@ def add_tenant():
         annual_rent = request.form.get("annual_rent")
 
         if property_id and unit_id and annual_rent:
+            start, expiry, end, error = _tenancy_dates_from_form(request.form)
+            if error:
+                db.session.rollback()
+                flash(error + " The user was not created.", "danger")
+                return redirect(url_for("tenants"))
             unit = Unit.query.filter_by(id=unit_id, property_id=property_id, is_occupied=False).first()
             if unit:
                 unit.is_occupied = True
@@ -850,9 +902,13 @@ def add_tenant():
                     unit_id=unit.id,
                     annual_rent=float(annual_rent),
                     is_active=True,
-                    start_date=date.today()
+                    start_date=start,
+                    lease_expiry=expiry,
+                    end_date=end,
                 )
                 db.session.add(new_tenancy)
+            else:
+                flash("That unit is no longer vacant, so no tenancy was set up.", "danger")
 
     db.session.commit()
     flash(f"User {new_user.name} added successfully!", "success")
@@ -871,7 +927,7 @@ def edit_tenant(user_id):
     is_management = has_perm("manage_staff")
     if user.role == "Admin" and not is_management:
         flash("Access denied. Only Management can edit staff accounts.", "danger")
-        return redirect(url_for("tenants"))
+        return redirect(_safe_next("tenants"))
 
     first_name = request.form.get("first_name", "").strip()
     last_name  = request.form.get("last_name", "").strip()
@@ -883,7 +939,7 @@ def edit_tenant(user_id):
 
     if role not in ("Tenant", "Landlord", "Admin"):
         flash("Invalid role selected.", "danger")
-        return redirect(url_for("tenants"))
+        return redirect(_safe_next("tenants"))
 
     if is_management and role == "Admin":
         department = request.form.get("department", "").strip()
@@ -895,13 +951,11 @@ def edit_tenant(user_id):
     property_id = request.form.get("property_id")
     unit_id     = request.form.get("unit_id")
     annual_rent = request.form.get("annual_rent")
-    start_date   = request.form.get("start_date")
-    end_date     = request.form.get("end_date")
 
     # Prevent duplicate email on another user
     if email and User.query.filter(User.email == email, User.id != user.id).first():
         flash("Another account already uses that email address.", "danger")
-        return redirect(url_for("tenants"))
+        return redirect(_safe_next("tenants"))
 
     # Update account details
     if full_name:
@@ -924,7 +978,7 @@ def edit_tenant(user_id):
     if not is_management:
         db.session.commit()
         flash(f"Contact details for {user.name} updated successfully!", "success")
-        return redirect(url_for("tenants"))
+        return redirect(_safe_next("tenants"))
 
     # Properties a landlord manages. Ticking a property owned by someone else
     # moves it to this landlord; unticking one leaves it with no landlord.
@@ -947,57 +1001,67 @@ def edit_tenant(user_id):
 
     active_tenancy = Tenancy.query.filter_by(tenant_id=user.id, is_active=True).first()
 
-    if role == "Tenant" and property_id and unit_id and annual_rent:
-        unit = Unit.query.filter_by(
-            id=unit_id,
-            property_id=property_id,
-            is_occupied=False
-        ).first()
+    def end_tenancy(t):
+        if t.unit:
+            t.unit.is_occupied = False
+        t.is_active = False
+        if not t.end_date:
+            t.end_date = date.today()
 
-        if not unit:
-            flash("Selected unit is invalid or already occupied.", "danger")
-            return redirect(url_for("tenants"))
+    if role != "Tenant":
+        # No longer a tenant: close any active tenancy.
+        if active_tenancy:
+            end_tenancy(active_tenancy)
 
-        # Free previous unit if changing assignment
-        if active_tenancy and active_tenancy.unit_id != unit.id:
-            if active_tenancy.unit:
-                active_tenancy.unit.is_occupied = False
-            active_tenancy.is_active = False
-
-        # Create or update tenancy
-        tenancy = active_tenancy if active_tenancy and active_tenancy.unit_id == unit.id else None
-
-        if not tenancy:
-            tenancy = Tenancy(
-                tenant_id=user.id,
-                unit_id=unit.id,
-                annual_rent=float(annual_rent),
-                is_active=True,
-                start_date=date.fromisoformat(start_date) if start_date else date.today(),
-                end_date=date.fromisoformat(end_date) if end_date else None
-            )
-            db.session.add(tenancy)
-        else:
-            tenancy.annual_rent = float(annual_rent)
-            if start_date:
-                tenancy.start_date = date.fromisoformat(start_date)
-            tenancy.end_date = date.fromisoformat(end_date) if end_date else None
-            tenancy.is_active = True
-
-        unit.is_occupied = True
+    elif "property_id" in request.form and not property_id:
+        # "No assignment" picked on purpose in the users list form.
+        if active_tenancy:
+            end_tenancy(active_tenancy)
 
     else:
-        # If user is no longer a tenant, close any active tenancy
-        if active_tenancy:
-            if active_tenancy.unit:
-                active_tenancy.unit.is_occupied = False
-            active_tenancy.is_active = False
+        # Forms without property/unit fields (the profile form) only update
+        # the current tenancy; they never end it.
+        moving = bool(unit_id) and (not active_tenancy or str(active_tenancy.unit_id) != str(unit_id))
+        start, expiry, end, error = _tenancy_dates_from_form(
+            request.form, None if moving else active_tenancy)
+        if error:
+            db.session.rollback()
+            flash(error + " Nothing was saved.", "danger")
+            return redirect(_safe_next("tenants"))
+        try:
+            rent = float(annual_rent) if annual_rent not in (None, "") else None
+        except ValueError:
+            rent = None
+
+        if moving:
+            unit = Unit.query.filter_by(id=unit_id, property_id=property_id,
+                                        is_occupied=False).first()
+            if not unit:
+                db.session.rollback()
+                flash("Selected unit is invalid or already occupied.", "danger")
+                return redirect(_safe_next("tenants"))
+            if rent is None:
+                db.session.rollback()
+                flash("Enter the annual rent for the new unit.", "danger")
+                return redirect(_safe_next("tenants"))
+            if active_tenancy:
+                end_tenancy(active_tenancy)
+            db.session.add(Tenancy(tenant_id=user.id, unit_id=unit.id, annual_rent=rent,
+                                   is_active=True, start_date=start,
+                                   lease_expiry=expiry, end_date=end))
+            unit.is_occupied = True
+        elif active_tenancy:
+            if rent is not None:
+                active_tenancy.annual_rent = rent
+            active_tenancy.start_date   = start
+            active_tenancy.lease_expiry = expiry
+            active_tenancy.end_date     = end
 
     db.session.commit()
     flash(f"User {user.name} updated successfully.", "success")
     if reassigned:
         flash("Moved to " + user.name + ": " + "; ".join(reassigned) + ".", "info")
-    return redirect(url_for("tenants"))
+    return redirect(_safe_next("tenants"))
 
 
 @app.route("/tenants/<int:user_id>/deactivate", methods=["POST"])

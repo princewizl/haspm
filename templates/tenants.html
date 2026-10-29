@@ -17,6 +17,7 @@
 </div>
 {% endblock %}
 
+{% from "_lease_dates.html" import lease_date_fields, lease_date_script %}
 {% block extra_head %}
 <style>
   /* Landlord: properties managed */
@@ -359,16 +360,7 @@
               <input class="form-ctrl" type="number" name="annual_rent" placeholder="0" min="0"/>
             </div>
           </div>
-          <div class="fg2">
-            <div class="fg">
-              <label class="form-label">Move-in Date</label>
-              <input class="form-ctrl" type="date" name="start_date"/>
-            </div>
-            <div class="fg">
-              <label class="form-label">Lease End Date</label>
-              <input class="form-ctrl" type="date" name="end_date"/>
-            </div>
-          </div>
+          {{ lease_date_fields('add') }}
         </div>
 
         <div class="df g8" style="margin-top:24px">
@@ -392,6 +384,7 @@
     </div>
     <div class="modal-body" style="max-height:80vh;overflow-y:auto">
       <form method="POST" id="editTenantForm">
+        <input type="hidden" name="next" value="{{ request.full_path }}"/>
 
         <div class="modal-section">Account Details</div>
         <div class="fg">
@@ -458,6 +451,7 @@
               <input class="form-ctrl" type="number" name="annual_rent" id="editRent" placeholder="0" min="0"/>
             </div>
           </div>
+          {{ lease_date_fields('edit') }}
         </div>
 
         <!-- Properties a landlord manages — Management only -->
@@ -517,6 +511,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ lease_date_script() }}
 <script>
   // ── Tenant payment history modal (AJAX) ─────────────────────────────
 async function loadHistory(tenantId, tenantName) {
@@ -653,10 +648,26 @@ async function openEditModal(buttonElement) {
     if (t.property_id) {
       propSel.value = t.property_id;
       await loadUnits(t.property_id, 'editUnitSelect');
+      // The vacant-units list leaves out the unit this tenant occupies, so
+      // add it back - otherwise saving would look like moving them out.
+      if (t.unit_id && !unitSel.querySelector(`option[value="${t.unit_id}"]`)) {
+        const opt = document.createElement('option');
+        opt.value = t.unit_id;
+        opt.textContent = `${t.unit_number} (current)`;
+        unitSel.insertBefore(opt, unitSel.children[1] || null);
+      }
       if (t.unit_id) unitSel.value = t.unit_id;
     } else {
       unitSel.innerHTML = '<option value="">— Select property first —</option>';
     }
+  }
+
+  const dates = document.querySelector('#editTenancySection .lease-dates');
+  if (dates) {
+    document.getElementById('editStartDate').value  = t.start_date || '';
+    document.getElementById('editLeaseExpiry').value = t.lease_expiry || '';
+    document.getElementById('editEndDate').value    = t.end_date || '';
+    refreshLeaseDates(dates);
   }
 
   openModal('editTenantModal');

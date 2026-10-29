@@ -87,43 +87,25 @@ def mark_overdue_invoices(app):
 # ── job 2: annual rent invoice generation ─────────────────────────────
 
 def _lease_year_window(tenancy, today):
-    """The current lease year for a tenancy, as (period_start, period_end).
+    """The lease term containing `today`, as (term_start, term_expiry).
 
-    Rent is billed once per year on the anniversary of the lease start, so a
-    tenancy that began 2025-03-01 is invoiced for 2025-03-01..2026-02-28, then
-    2026-03-01, and so on.
+    The first term runs from move-in to the lease expiry entered on the
+    tenant's form; every later term starts on a renewal date (the day after
+    an expiry) and runs a year. A tenancy that moved in 2026-01-15 with expiry
+    2026-12-31 is billed for 2026-01-15..2026-12-31, then 2027-01-01..
+    2027-12-31, and so on.
     """
-    start = tenancy.start_date
-    if not start or today < start:
-        return None, None
-
-    years = today.year - start.year
-    try:
-        anniversary = start.replace(year=start.year + years)
-    except ValueError:                       # 29 Feb on a non-leap year
-        anniversary = start.replace(year=start.year + years, day=28)
-    if anniversary > today:
-        years -= 1
-        try:
-            anniversary = start.replace(year=start.year + years)
-        except ValueError:
-            anniversary = start.replace(year=start.year + years, day=28)
-
-    try:
-        nxt = start.replace(year=start.year + years + 1)
-    except ValueError:
-        nxt = start.replace(year=start.year + years + 1, day=28)
-
-    return anniversary, nxt - timedelta(days=1)
+    term = tenancy.term_for(today)
+    return term if term else (None, None)
 
 
 def generate_annual_rent_invoices(app):
     """
     Idempotent: creates one Rent invoice per active tenancy per lease year.
 
-    Rent is paid annually, so a tenant is billed on the anniversary of their
-    lease start and not again until the next one. Invoices are raised
-    ADVANCE_DAYS before the anniversary so the tenant has notice.
+    Rent is paid annually, so a tenant is billed at the start of each lease
+    term: on move-in, then on each renewal date. Invoices are raised
+    ADVANCE_DAYS before the renewal date so the tenant has notice.
     """
     ADVANCE_DAYS = 30
 
@@ -144,7 +126,7 @@ def generate_annual_rent_invoices(app):
             if t.end_date and period_start > t.end_date:
                 continue
 
-            # One Rent invoice per lease year: due on the anniversary itself.
+            # One Rent invoice per lease term: due on the day the term starts.
             existing = (Invoice.query
                         .filter_by(tenant_id=t.tenant_id, unit_id=t.unit_id, type="Rent")
                         .filter(Invoice.due_date >= period_start,
@@ -182,35 +164,35 @@ def generate_annual_rent_invoices(app):
 
 def check_lease_expiry(app):
     """
-    Fires once per tenancy in the 28–35 day window before lease end.
-    Sends warning email + generates final month's invoice.
+    Fires once per lease term in the 28-35 day window before the lease
+    expiry. Leases renew yearly, so this is a renewal reminder every year;
+    when a lease end date is set it warns before the tenant moves out.
     """
     with app.app_context():
-        today        = date.today()
-        window_start = today + timedelta(days=28)
-        window_end   = today + timedelta(days=35)
+        today = date.today()
+        sent  = 0
 
-        expiring = Tenancy.query.filter(
-            Tenancy.is_active == True,
-            Tenancy.end_date  >= window_start,
-            Tenancy.end_date  <= window_end,
-        ).all()
+        for t in Tenancy.query.filter_by(is_active=True).all():
+            expiry = t.current_expiry
+            if not expiry:
+                continue
+            days_left = (expiry - today).days
+            if not 28 <= days_left <= 35:
+                continue
 
-        for t in expiring:
-            tenant    = t.tenant
-            days_left = (t.end_date - today).days
-
-            # Email warning (once per tenancy)
+            tenant = t.tenant
+            # Once per term: the 30-day window cannot span two expiries.
             if not _already_notified(tenant.id, "lease_expiry", ref_id=t.id, window_days=30):
                 ok = send_lease_expiry_email(app, tenant.email, tenant.name, t, days_left)
                 _log(tenant.id, "lease_expiry", ref_id=t.id,
                      recipient=tenant.email, status="sent" if ok else "failed")
+                sent += 1
 
-            # No final invoice here: with annual rent the year's invoice was
-            # already raised on the anniversary by generate_annual_rent_invoices.
+            # No final invoice here: with annual rent the next term's invoice is
+            # raised ahead of the renewal date by generate_annual_rent_invoices.
 
         db.session.commit()
-        log.info(f"[lease_expiry] Processed {len(expiring)} expiring tenancy/ies.")
+        log.info(f"[lease_expiry] {sent} expiry reminder(s) sent.")
 
 
 # ── manual run (called from admin UI) ─────────────────────────────────

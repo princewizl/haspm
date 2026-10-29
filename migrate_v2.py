@@ -17,6 +17,9 @@ What it does:
   7. properties.avg_rent recalculated as the mean of the units' rents
   8. units.unit_number widened to 60 characters (Postgres only; SQLite
      does not enforce lengths)
+  9. tenancies.lease_expiry (new): filled from the old lease end if one was
+     typed, otherwise one year after move-in. Also lists tenancies that
+     look like they were ended by mistake.
 
 Run deploy/backup.sh first on anything with real data in it.
 """
@@ -122,6 +125,13 @@ def migrate():
             stmts.append("ALTER TABLE units ALTER COLUMN unit_number TYPE VARCHAR(60)")
             _say("units.unit_number -> VARCHAR(60)", True)
 
+        # ── 9. lease expiry, separate from lease end ─────────────────
+        backfill_expiry = False
+        if "tenancies" in tables and "lease_expiry" not in _cols(insp, "tenancies"):
+            stmts.append("ALTER TABLE tenancies ADD COLUMN lease_expiry DATE")
+            _say("tenancies.lease_expiry -> add", True)
+            backfill_expiry = True
+
         # ── 6. maintenance request classification ────────────────────
         backfill = False
         if "tickets" in tables:
@@ -158,6 +168,43 @@ def migrate():
             print(f"  classified {n} existing ticket(s) from their old priority")
         elif backfill:
             _say("existing tickets -> classify from priority", True)
+
+        # ── 9 (cont). fill lease_expiry, report suspect closures ─────
+        if "tenancies" in tables and not DRY:
+            from models import Tenancy
+            if backfill_expiry:
+                # A lease end typed in the old form was the expiry; otherwise
+                # one year after move-in. Lease end itself is left untouched.
+                n = 0
+                for t in Tenancy.query.filter(Tenancy.lease_expiry.is_(None)).all():
+                    if t.start_date:
+                        t.lease_expiry = t.end_date or Tenancy.default_expiry(t.start_date)
+                        n += 1
+                db.session.commit()
+                print(f"  set lease_expiry on {n} tenancy(ies)")
+                ending = Tenancy.query.filter(Tenancy.is_active.is_(True),
+                                              Tenancy.end_date.isnot(None)).count()
+                if ending:
+                    print(f"  ! {ending} active tenancy(ies) still have a Lease End date, so they"
+                          " stop renewing then. Clear it on the tenant's form if they renew yearly.")
+        if "tenancies" in tables:
+            # Before this release, saving a tenant's profile form ended their
+            # tenancy without setting an end date. List likely cases.
+            rows = db.session.execute(text("""
+                SELECT t.id, u.name, un.unit_number, p.name
+                FROM tenancies t
+                JOIN users u       ON u.id = t.tenant_id
+                LEFT JOIN units un ON un.id = t.unit_id
+                LEFT JOIN properties p ON p.id = un.property_id
+                WHERE t.is_active = :no AND t.end_date IS NULL AND u.role = 'Tenant'
+                  AND NOT EXISTS (SELECT 1 FROM tenancies a
+                                  WHERE a.tenant_id = t.tenant_id AND a.is_active = :yes)
+            """), {"no": False, "yes": True}).fetchall()
+            if rows:
+                print("\n  ! Tenancies ended with no end date (possibly by the old profile-form"
+                      " bug) - check and re-assign if wrong:")
+                for tid, who, unit, prop in rows:
+                    print(f"      tenancy {tid}: {who} - {prop or '?'} / {unit or '?'}")
 
         # ── 7. average rent is now derived from the units' rents ─────
         # Only where some unit has a rent; properties whose units were all

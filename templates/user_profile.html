@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_lease_dates.html" import lease_date_fields, lease_date_script %}
 {% block title %}{{ u.name }}{% endblock %}
 {% block page_title %}User Profile{% endblock %}
 
@@ -182,19 +183,22 @@
           <div class="info-row"><span class="info-label">Unit</span><span class="info-val">{{ tenancy.unit.unit_number if tenancy.unit else '—' }}</span></div>
           <div class="info-row"><span class="info-label">Annual Rent</span><span class="info-val text-nv">{{ fmt(tenancy.annual_rent) }}</span></div>
           <div class="info-row"><span class="info-label">Move-in Date</span><span class="info-val">{{ tenancy.start_date.strftime('%b %d, %Y') }}</span></div>
-          {% set days_left = (tenancy.end_date - today).days if tenancy.end_date else None %}
-          <div class="info-row"><span class="info-label">Lease End</span>
+          {% set exp = tenancy.current_expiry %}
+          {% set days_left = tenancy.days_to_expiry %}
+          <div class="info-row"><span class="info-label">Lease Expiry</span>
             <span class="info-val" style="color:{{ 'var(--cr)' if days_left is not none and days_left < 60 else 'inherit' }}">
-              {{ tenancy.end_date.strftime('%b %d, %Y') if tenancy.end_date else 'Open-ended' }}
+              {{ exp.strftime('%b %d, %Y') if exp else '—' }}
+              {% if days_left is not none and days_left >= 0 %}
+              <span style="font-size:11.5px;color:var(--mt);font-weight:400">({{ days_left }} day{{ '' if days_left == 1 else 's' }})</span>
+              {% endif %}
             </span>
           </div>
-          {% if days_left is not none %}
-          <div class="info-row"><span class="info-label">Days Left</span>
-            <span class="info-val" style="color:{{ 'var(--cr)' if days_left < 60 else 'var(--gr)' }}">
-              {{ days_left }} day{{ '' if days_left == 1 else 's' }}
-            </span>
+          <div class="info-row"><span class="info-label">Renewal Date</span>
+            <span class="info-val">{{ tenancy.renewal_date.strftime('%b %d, %Y') if tenancy.renewal_date else 'Not renewing' }}</span>
           </div>
-          {% endif %}
+          <div class="info-row"><span class="info-label">Lease End</span>
+            <span class="info-val">{{ tenancy.end_date.strftime('%b %d, %Y') if tenancy.end_date else 'Open-ended (renews yearly)' }}</span>
+          </div>
         {% else %}
           <div class="empty-state"><i class="bi bi-house-x"></i>No active tenancy assigned.</div>
         {% endif %}
@@ -547,18 +551,17 @@
             <input class="form-ctrl" type="password" name="password" placeholder="New password…" minlength="6"/>
           </div>
         </div>
+        <input type="hidden" name="next" value="{{ url_for('user_profile', user_id=u.id) }}"/>
         {% if u.role == 'Tenant' and tenancy %}
         <div class="modal-section">Tenancy</div>
-        <div class="fg2">
-          <div class="fg">
-            <label class="form-label">Annual Rent (₦)</label>
-            <input class="form-ctrl" type="number" name="annual_rent" value="{{ tenancy.annual_rent }}" min="0"/>
-          </div>
-          <div class="fg">
-            <label class="form-label">Lease End Date</label>
-            <input class="form-ctrl" type="date" name="end_date" value="{{ tenancy.end_date.strftime('%Y-%m-%d') if tenancy.end_date else '' }}"/>
-          </div>
+        <div class="fg">
+          <label class="form-label">Annual Rent (₦)</label>
+          <input class="form-ctrl" type="number" name="annual_rent" value="{{ '%g'|format(tenancy.annual_rent) }}" min="0"/>
         </div>
+        {{ lease_date_fields('profile',
+             start=tenancy.start_date.isoformat() if tenancy.start_date else '',
+             expiry=tenancy.current_expiry.isoformat() if tenancy.current_expiry else '',
+             end=tenancy.end_date.isoformat() if tenancy.end_date else '') }}
         {% endif %}
         <div class="df g8" style="margin-top:24px">
           <button type="button" class="btn-ghost" style="flex:1;justify-content:center" onclick="closeModal('editProfileModal')">Cancel</button>
@@ -573,6 +576,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ lease_date_script() }}
 <script>
   /* Pass today's date for lease countdown */
   const now = new Date();

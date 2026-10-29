@@ -4,7 +4,7 @@ All relationships are defined here via SQLAlchemy ORM.
 """
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
@@ -234,9 +234,18 @@ class Unit(db.Model):
 class Tenancy(db.Model):
     __tablename__ = "tenancies"
 
+    # Dates, all entered on the tenant's form:
+    #   start_date    move-in date
+    #   lease_expiry  last day of the lease term. Leases renew yearly, so this
+    #                 rolls forward a year at a time while the tenancy runs;
+    #                 the stored value is any one term's expiry.
+    #   end_date      when the tenant actually leaves. Usually blank: a lease
+    #                 that renews yearly is open-ended.
+    # Renewal date is always the day after the current expiry.
     id           = db.Column(db.Integer, primary_key=True)
     start_date   = db.Column(db.Date, nullable=False)
     end_date     = db.Column(db.Date)
+    lease_expiry = db.Column(db.Date)
     # Rent is paid annually. The column was previously called monthly_rent but
     # already held the yearly figure; migrate_v2.py renames it in place.
     annual_rent  = db.Column(db.Float, nullable=False)
@@ -248,6 +257,84 @@ class Tenancy(db.Model):
 
     tenant       = db.relationship("User", back_populates="tenancies")
     unit         = db.relationship("Unit", back_populates="tenancies")
+
+    # ── Lease terms ──────────────────────────────────────────────────
+    @staticmethod
+    def add_years(d, n):
+        """`d` moved by `n` years; 29 Feb lands on 28 Feb in other years."""
+        try:
+            return d.replace(year=d.year + n)
+        except ValueError:
+            return d.replace(year=d.year + n, day=28)
+
+    @classmethod
+    def default_expiry(cls, start):
+        """One year from move-in: moved in 1 Mar 2026 -> expires 28 Feb 2027."""
+        return cls.add_years(start, 1) - timedelta(days=1)
+
+    def _first_renewal(self):
+        """The first renewal date (day after the first term's expiry).
+
+        Renewals are counted from here a whole year at a time, so they always
+        fall on the same day of the year (1 March stays 1 March even across
+        29 February). The stored expiry may belong to any term, so it is
+        stepped back to the first renewal after move-in; that makes the first
+        term at most one year long. It can be shorter, e.g. moved in on
+        15 January with the expiry aligned to 31 December.
+        """
+        if not self.start_date:
+            return None
+        expiry = self.lease_expiry or self.default_expiry(self.start_date)
+        if expiry < self.start_date:
+            expiry = self.default_expiry(self.start_date)
+        renewal = expiry + timedelta(days=1)
+        while self.add_years(renewal, -1) > self.start_date:
+            renewal = self.add_years(renewal, -1)
+        return renewal
+
+    def term_for(self, d):
+        """(term_start, term_expiry) of the lease term containing day `d`.
+
+        The first term runs from move-in to the first expiry. Each later term
+        starts on a renewal date and runs one year. None before move-in or
+        after the lease has ended.
+        """
+        first = self._first_renewal()
+        if first is None or d < self.start_date:
+            return None
+        if self.end_date and d > self.end_date:
+            return None
+        k = 0
+        while self.add_years(first, k) <= d:
+            k += 1
+        # Term k runs from renewal k-1 (or move-in) to the day before renewal k.
+        start = self.start_date if k == 0 else self.add_years(first, k - 1)
+        expiry = self.add_years(first, k) - timedelta(days=1)
+        if self.end_date and expiry > self.end_date:
+            expiry = self.end_date
+        return start, expiry
+
+    @property
+    def current_expiry(self):
+        """Expiry of the term running today (or the first one, before move-in)."""
+        today = date.today()
+        if self.start_date and today < self.start_date:
+            return self._first_renewal() - timedelta(days=1)
+        term = self.term_for(today)
+        return term[1] if term else self.end_date
+
+    @property
+    def renewal_date(self):
+        """The day after the current expiry; None once the lease is ending."""
+        exp = self.current_expiry
+        if exp is None or (self.end_date and exp >= self.end_date):
+            return None
+        return exp + timedelta(days=1)
+
+    @property
+    def days_to_expiry(self):
+        exp = self.current_expiry
+        return (exp - date.today()).days if exp else None
 
     def __repr__(self):
         return f"<Tenancy tenant#{self.tenant_id} unit#{self.unit_id}>"
