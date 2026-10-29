@@ -45,6 +45,13 @@ else
   git -C "$APP_DIR" remote set-url origin "$REPO"
 fi
 
+# The checkout belongs to the CI "deploy" account, which runs deploy.sh over
+# SSH: it must be able to git fetch, read the .env files and write backups.
+# Cloning as root and leaving it there makes every CI deploy fail at fetch.
+if id deploy >/dev/null 2>&1; then
+  chown -R deploy:deploy "$APP_DIR"
+fi
+
 # Persistent state. uid 10001 matches the hsapp user in the image.
 mkdir -p "$APP_DIR"/data/{live,test}/{data,static-uploads/properties,doc-uploads/documents}
 chown -R 10001:10001 "$APP_DIR/data"
@@ -62,6 +69,7 @@ APP_ENV=${env_name}
 SECRET_KEY=$(openssl rand -hex 32)
 EOF
   chmod 600 "$file"
+  if id deploy >/dev/null 2>&1; then chown deploy:deploy "$file"; fi
   echo "    wrote $file"
 }
 gen_env "$APP_DIR/.env.live" live
