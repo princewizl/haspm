@@ -57,6 +57,12 @@ case "$TARGET" in
 esac
 
 for env in "${MIGRATE[@]}"; do
+  # Older images saved bank details inside the container, where recreating it
+  # would lose them. Copy them to the data volume first; never overwrite.
+  docker exec "haspm-web-$env" sh -c \
+    'if [ -f /app/bank_config.json ]; then cp -n /app/bank_config.json /app/data/bank_config.json; fi' \
+    || echo "    (could not check $env container for bank details)"
+
   if [ "$env" = "live" ]; then
     echo "==> Backing up live before migrating"
     "$APP_DIR/deploy/backup.sh" live || {

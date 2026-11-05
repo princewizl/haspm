@@ -12,6 +12,7 @@ hs_property.db
 data/
 email_config.json
 paystack_config.json
+bank_config.json
 uploads/
 static/uploads/
 

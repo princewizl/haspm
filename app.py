@@ -120,7 +120,9 @@ app.config.setdefault("PAYSTACK_PUBLIC_KEY",  "")
 app.config.setdefault("PAYSTACK_SECRET_KEY",  "")
 
 # ── Bank transfer config (persisted in bank_config.json) ──────────────
-BANK_CONFIG_FILE = os.path.join(BASE_DIR, "bank_config.json")
+# In DATA_DIR like the other saved settings: under BASE_DIR it sat inside the
+# container and was lost every time a deploy recreated it.
+BANK_CONFIG_FILE = os.path.join(DATA_DIR, "bank_config.json")
 
 def _load_bank_config():
     if os.path.exists(BANK_CONFIG_FILE):

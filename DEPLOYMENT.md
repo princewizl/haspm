@@ -160,7 +160,7 @@ the flag off before importing the app, so it cannot double-start.
 startup, so even configuring SMTP through the staging Settings page sends
 nothing.
 
-**SMTP and Paystack credentials** are entered in-app and persist to
+**SMTP, Paystack and bank details** are entered in-app and persist to
 `data/<env>/data/*.json`. They are not in git and not in the image, so they
 survive rebuilds and must be set once per environment.
 

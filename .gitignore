@@ -6,6 +6,7 @@
 *.sqlite3
 email_config.json
 paystack_config.json
+bank_config.json
 
 # Runtime state (lives on Docker volumes / the server)
 data/
