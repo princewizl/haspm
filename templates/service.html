@@ -641,9 +641,20 @@
         <div class="g2" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
           <div class="fg" style="margin-bottom:0;">
             <label class="form-label">Property</label>
+            {% if role == 'Tenant' %}
+              {# Set from the tenant's own tenancy - not something they choose. #}
+              <div class="form-ctrl" style="background:var(--bg);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                {% if my_tenancy and my_tenancy.unit %}
+                  {{ my_tenancy.unit.prop.name }} &middot; {{ my_tenancy.unit.unit_number }}
+                {% else %}
+                  <span style="color:var(--cr)">No active tenancy</span>
+                {% endif %}
+              </div>
+            {% else %}
             <select class="form-sel" name="property">
               {% for p in properties %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
             </select>
+            {% endif %}
           </div>
           <div class="fg" style="margin-bottom:0;">
             <label class="form-label">Area</label>

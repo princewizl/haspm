@@ -26,7 +26,7 @@ import requests as http
 
 from flask import (
     render_template, redirect, url_for,
-    session, request, flash, jsonify, abort, current_app
+    session, request, flash, jsonify, abort, current_app, Response
 )
 from models import db, User, Unit, Invoice, Transaction, BankTransferClaim
 from permissions import has_perm
@@ -496,6 +496,7 @@ def invoices_mark_paid(app):
             date        = datetime.utcnow(),
             tenant_id   = inv.tenant_id,
             invoice_id  = inv.id,
+            processed_by_id = session.get("user_id"),
         )
         db.session.add(txn)
         db.session.commit()
@@ -681,6 +682,7 @@ def confirm_transfer_view(app):
                 date         = datetime.utcnow(),
                 tenant_id    = inv.tenant_id,
                 invoice_id   = inv.id,
+                processed_by_id = session.get("user_id"),
             )
             db.session.add(txn)
 
@@ -727,6 +729,44 @@ def reject_transfer_view(app):
 # ─────────────────────────────────────────────
 #  REGISTRATION  — call this from app.py
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  GET /invoices/<id>/receipt
+#  PDF receipt for a paid invoice.
+# ─────────────────────────────────────────────
+def invoice_receipt_view(app):
+    @app.route("/invoices/<int:inv_id>/receipt")
+    def invoice_receipt(inv_id):
+        from receipts import receipt_context, render_receipt_pdf
+
+        user_id = session.get("user_id")
+        role    = session.get("role")
+        if not user_id:
+            flash("Please sign in to continue.", "info")
+            return redirect(url_for("login"))
+
+        inv = Invoice.query.get_or_404(inv_id)
+        prop = inv.unit.prop if inv.unit else None
+        allowed = (
+            (role == "Tenant" and inv.tenant_id == user_id)
+            or (role == "Landlord" and prop is not None and prop.landlord_id == user_id)
+            or (role == "Admin" and (has_perm("view_finance_full") or has_perm("view_payment_status")))
+        )
+        if not allowed:
+            flash("You don't have access to that receipt.", "danger")
+            return redirect(url_for("invoices"))
+
+        ctx = receipt_context(inv)
+        if ctx is None:
+            flash(f"{inv.inv_number} has not been paid yet, so there is no receipt.", "info")
+            return redirect(url_for("invoices"))
+
+        pdf = render_receipt_pdf(ctx)
+        filename = f"Receipt-{inv.inv_number}.pdf"
+        disposition = "attachment" if request.args.get("download") else "inline"
+        return Response(pdf, mimetype="application/pdf",
+                        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'})
+
+
 def register_invoice_routes(app):
     invoices_view(app)
     invoices_create(app)
@@ -740,3 +780,4 @@ def register_invoice_routes(app):
     invoices_delete(app)
     api_invoice_tenants(app)
     invoices_bulk_overdue(app)
+    invoice_receipt_view(app)

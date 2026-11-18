@@ -37,7 +37,8 @@ class User(db.Model):
     invoices    = db.relationship("Invoice",   back_populates="tenant",    lazy="dynamic")
     tickets     = db.relationship("Ticket",    back_populates="tenant",    lazy="dynamic",
                                   foreign_keys="Ticket.tenant_id")
-    transactions = db.relationship("Transaction", back_populates="tenant", lazy="dynamic")
+    transactions = db.relationship("Transaction", back_populates="tenant", lazy="dynamic",
+                                   foreign_keys="Transaction.tenant_id")
 
     # ── Password handling ────────────────────────────────────────────
     # Stored as a werkzeug hash. Accounts created before hashing was added
@@ -384,8 +385,11 @@ class Transaction(db.Model):
 
     tenant_id    = db.Column(db.Integer, db.ForeignKey("users.id"),    nullable=False)
     invoice_id   = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=False)
+    # Staff member who recorded or confirmed it; NULL for online (Paystack).
+    processed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
-    tenant       = db.relationship("User",    back_populates="transactions")
+    tenant       = db.relationship("User",    back_populates="transactions",
+                                   foreign_keys=[tenant_id])
     invoice      = db.relationship("Invoice", back_populates="transaction")
 
     def __repr__(self):

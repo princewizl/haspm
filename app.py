@@ -1259,6 +1259,9 @@ def service():
         done_count=sum(1 for t in visible if t.status == "resolved"),
         technicians=TECHNICIANS,
         properties=Property.query.all(),
+        # Tenants report against the unit they rent; they never pick a property.
+        my_tenancy=(Tenancy.query.filter_by(tenant_id=user_id, is_active=True).first()
+                    if role == "Tenant" else None),
         role=role,
         rating_summary=rating_summary,
         classes=Ticket.CLASSES,
@@ -1314,6 +1317,16 @@ def _notify_maintenance_team(ticket, sender_id):
 def submit_service():
     choices = Ticket.CLASSES if _can_classify() else Ticket.TENANT_CLASSES
     picked  = request.form.get("issue_type", "")
+
+    # A tenant reports against the unit they rent; whatever the form says
+    # about the property is ignored. Staff still choose the property.
+    tenancy = None
+    if session.get("role") == "Tenant":
+        tenancy = Tenancy.query.filter_by(tenant_id=session["user_id"], is_active=True).first()
+        if not tenancy or not tenancy.unit:
+            flash("You don't have an active tenancy yet, so a request can't be linked to a "
+                  "property. Please contact the property manager.", "danger")
+            return redirect(url_for("service"))
     if picked not in choices:
         flash("Please select the type of issue.", "danger")
         return redirect(url_for("service"))
@@ -1325,18 +1338,13 @@ def submit_service():
         category=request.form.get("category", "General"),
         status="open",
         tenant_id=session["user_id"],
-        property_id=request.form.get("property"),
+        property_id=tenancy.unit.property_id if tenancy else request.form.get("property"),
+        unit_id=tenancy.unit_id if tenancy else None,
         date_raised=datetime.utcnow(),
         # Staff-only classes are not a tenant choice; record the closest one.
         tenant_category=picked if picked in Ticket.TENANT_CLASSES else "routine",
     )
     new_ticket.apply_classification(picked)
-
-    # A tenant's request belongs to the unit they rent in that property.
-    if session.get("role") == "Tenant":
-        tenancy = Tenancy.query.filter_by(tenant_id=session["user_id"], is_active=True).first()
-        if tenancy and tenancy.unit and str(tenancy.unit.property_id) == str(new_ticket.property_id):
-            new_ticket.unit_id = tenancy.unit_id
 
     if picked == "scheduled":
         try:

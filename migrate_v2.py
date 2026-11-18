@@ -20,6 +20,8 @@ What it does:
   9. tenancies.lease_expiry (new): filled from the old lease end if one was
      typed, otherwise one year after move-in. Also lists tenancies that
      look like they were ended by mistake.
+  10. transactions.processed_by_id (new): staff member who confirmed a
+      payment, printed on receipts
 
 Run deploy/backup.sh first on anything with real data in it.
 """
@@ -124,6 +126,11 @@ def migrate():
         if "units" in tables and db.engine.dialect.name == "postgresql":
             stmts.append("ALTER TABLE units ALTER COLUMN unit_number TYPE VARCHAR(60)")
             _say("units.unit_number -> VARCHAR(60)", True)
+
+        # ── 10. who confirmed each payment (shown on receipts) ───────
+        if "transactions" in tables and "processed_by_id" not in _cols(insp, "transactions"):
+            stmts.append("ALTER TABLE transactions ADD COLUMN processed_by_id INTEGER")
+            _say("transactions.processed_by_id -> add", True)
 
         # ── 9. lease expiry, separate from lease end ─────────────────
         backfill_expiry = False

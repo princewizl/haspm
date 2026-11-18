@@ -141,9 +141,15 @@
           
           <td>
             {% if inv.status == 'paid' %}
-              <span style="color:var(--gr);font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px;white-space:nowrap">
-                <i class="bi bi-check-circle-fill"></i> Paid
-              </span>
+              <div class="df g8" style="align-items:center">
+                <span style="color:var(--gr);font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px;white-space:nowrap">
+                  <i class="bi bi-check-circle-fill"></i> Paid
+                </span>
+                <a class="btn-ghost sm" href="{{ url_for('invoice_receipt', inv_id=inv.id) }}" target="_blank" rel="noopener"
+                   title="Open the payment receipt (PDF)">
+                  <i class="bi bi-file-earmark-pdf"></i> Receipt
+                </a>
+              </div>
             {% elif inv.has_pending_transfer %}
               <span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#B45309;font-weight:600;white-space:nowrap;background:#FFFBEB;padding:4px 10px;border-radius:99px;border:1px solid #FCD34D">
                 <i class="bi bi-hourglass-split"></i> Awaiting Confirmation
